@@ -39,7 +39,7 @@ export default function Calendar() {
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
-  const [activeSummary, setActiveSummary] = useState<"workout" | "meal" | null>(null);
+  const [activeSummary, setActiveSummary] = useState<"nutrition" | "fitness" | null>(null);
   const cellHeight = (containerHeight - headerHeight - insets.top) / 6;
   
   //const db = SQLite.openDatabaseAsync('fitness.db');
@@ -89,6 +89,7 @@ export default function Calendar() {
               fat: meals.reduce((sum, meal) => sum + meal.fat, 0)
             });
             setActiveModal("day");
+            setActiveSummary("nutrition");
           }}>
             <Text style={[styles.text, { height: cellHeight }]}>{item}</Text>
           </TouchableOpacity>
@@ -100,10 +101,10 @@ export default function Calendar() {
       <Modal visible={activeModal === "day"} transparent animationType="none">
         <View style={styles.modalBackdrop}>
           <View style={styles.modalBox}>
-
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => setActiveModal(null)}>
                 <Text style={styles.text}>✕</Text>
+              
               </TouchableOpacity>
 
               <Text style={[styles.text, { fontSize: 16 }]}>{monthNames[month]} {selectedDay} {year}</Text>
@@ -118,50 +119,63 @@ export default function Calendar() {
             </View>
 
             <View style={{flexDirection: "row", marginBottom: 8, marginTop: 8}}>
-              <TouchableOpacity style={[styles.toggleButton, { backgroundColor: activeSummary === "meal" ? "#42a6ce" : "transparent" }]} onPress={() => setActiveSummary("meal")}>
+              <TouchableOpacity style={[styles.toggleButton, { backgroundColor: activeSummary === "nutrition" ? "#42a6ce" : "transparent" }]} onPress={() => setActiveSummary("nutrition")}>
                 <Text style={styles.text}>Nutrition</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity style={[styles.toggleButton, { backgroundColor: activeSummary === "workout" ? "#42a6ce" : "transparent" }]} onPress={() => setActiveSummary("workout")}>
+              <TouchableOpacity style={[styles.toggleButton, { backgroundColor: activeSummary === "fitness" ? "#42a6ce" : "transparent" }]} onPress={() => setActiveSummary("fitness")}>
                 <Text style={styles.text}>Fitness</Text>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.modalSmallHeader}>
-              <Text style={styles.text}>Calories: {dayMacros.calories}</Text>
-              <Text style={styles.text}>Protein: {dayMacros.protein}g</Text>
-              <Text style={styles.text}>Carbs: {dayMacros.carbs}g</Text>
-              <Text style={styles.text}>Fat: {dayMacros.fat}g</Text>
-            </View>
-
-            <Text style={styles.text}>Meals:</Text>
-            <Text style={styles.text}></Text>
-            <FlatList
-              data={getMealDateInfo(`${year}-${(month + 1).toString().padStart(2, '0')}-${selectedDay.toString().padStart(2, '0')}`)}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
-                <View>
-                  <Text style={styles.text}>{item.name}</Text>
-                  <Text style={styles.text}>Calories: {item.calories}</Text>
-                  <Text style={styles.text}>Protein: {item.protein}g</Text>
-                  <Text style={styles.text}>Carbs: {item.carbs}g</Text>
-                  <Text style={styles.text}>Fat: {item.fat}g</Text>
-                  <Text style={styles.text}></Text>
+            {activeSummary === "nutrition" && (
+              <View>
+                <View style={styles.modalSmallHeader}>
+                  <Text style={styles.text}>Nutrition Summary:</Text>
+                  <Text style={styles.text}>Calories: {dayMacros.calories}</Text>
+                  <Text style={styles.text}>Protein: {dayMacros.protein}g</Text>
+                  <Text style={styles.text}>Carbs: {dayMacros.carbs}g</Text>
+                  <Text style={styles.text}>Fat: {dayMacros.fat}g</Text>
                 </View>
-              )}
-            />
 
-            <Text style={styles.text}>Exercises:</Text>
-            <FlatList
-              data={getExerciseDateInfo(`${year}-${(month + 1).toString().padStart(2, '0')}-${selectedDay.toString().padStart(2, '0')}`)}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
-                <View>
-                  <Text style={styles.text}>{item.name} Sets: {item.sets} Reps: {item.reps} Weight: {item.weight}</Text>
-                  <Text style={styles.text}></Text>
-                </View>
-              )}
-            />
+                <Text style={styles.text}>Meals:</Text>
+                <Text style={styles.text}></Text>
+                <FlatList
+                  data={getMealDateInfo(`${year}-${(month + 1).toString().padStart(2, '0')}-${selectedDay.toString().padStart(2, '0')}`)}
+                  keyExtractor={(item) => item.id.toString()}
+                  renderItem={({ item }) => (
+                    <View>
+                      <Text style={styles.text}>{item.name}</Text>
+                      <Text style={styles.text}>Calories: {item.calories}</Text>
+                      <Text style={styles.text}>Protein: {item.protein}g</Text>
+                      <Text style={styles.text}>Carbs: {item.carbs}g</Text>
+                      <Text style={styles.text}>Fat: {item.fat}g</Text>
+                      <Text style={styles.text}></Text>
+                    </View>
+                  )}
+                />
+              </View>
+            )}
+            {activeSummary === "fitness" && (
+              <View>
+                <Text style={styles.text}>Exercises:</Text>
+                <FlatList
+                  data={getExerciseDateInfo(`${year}-${(month + 1).toString().padStart(2, '0')}-${selectedDay.toString().padStart(2, '0')}`)}
+                  keyExtractor={(item) => item.id.toString()}
+                  renderItem={({ item }) => (
+                    <View>
+                      <Text style={styles.text}>{item.name} Sets: {item.sets} Reps: {item.reps} Weight: {item.weight}</Text>
+                      <Text style={styles.text}></Text>
+                    </View>
+                  )}
+                />
+              </View>
+            )}
+
+            
+            
+
+            
           </View>
         </View>
       </Modal>

@@ -11,6 +11,10 @@ export default function Graphs() {
   }));
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.entryButton}>Graphs</Text>
+        <Text style={styles.toggleButton}>Visualize your fitness and nutrition data over time.</Text>
+      </View>
       <View style={graphStyle.graph}>
         <CartesianChart
         data={DATA}
