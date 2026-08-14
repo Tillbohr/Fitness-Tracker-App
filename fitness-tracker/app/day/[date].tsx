@@ -5,7 +5,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { PolarChart, Pie } from "victory-native";
 import { styles, activityColors } from "../../styles/defaultStyle";
-import { useDatabase, SavedExercise, SavedMeal } from "../../database";
+import { useDatabase, ExerciseRow, SavedExercise, SavedMeal } from "../../database";
 import { formatDateLong } from "../../utils/dates";
 import { toInt, toNumber } from "../../utils/numbers";
 
@@ -32,27 +32,69 @@ const PIE_SIZE = 150;
 // than a style.
 const ON_LIGHT_FILL = "#25292e";
 
-type Kind = "workout" | "meal";
+type Kind = "exercise" | "meal";
 
 // The add flow as one value rather than a flag per modal, so a step can never be
 // open without the kind it belongs to - the same reason the Saved tab holds its
 // pending delete as an object. Steps run:
 //   chooseKind -> chooseSource -> newEntry
-//                              -> savedPicker -> savedExercise (workouts only;
-//                                                a saved meal already carries
-//                                                its macros, so tapping it logs)
+//                              -> savedPicker -> savedExerciseMetrics
+//                                 (exercises only; a saved meal already carries
+//                                  its macros, so tapping it logs)
 type Step =
   | { name: "chooseKind" }
   | { name: "chooseSource"; kind: Kind }
   | { name: "newEntry"; kind: Kind }
   | { name: "savedPicker"; kind: Kind }
-  | { name: "savedExercise"; exercise: SavedExercise };
+  | { name: "savedExerciseMetrics"; exercise: SavedExercise };
 
-const EMPTY_WORKOUT_FORM = { name: '', weight: '', sets: '', reps: '' };
+// Sets/reps/weight and minutes/seconds are alternatives: an exercise is measured
+// one way or the other, so the form offers both and stores whatever was filled.
+const EMPTY_EXERCISE_FORM = { name: '', weight: '', sets: '', reps: '', minutes: '', seconds: '' };
 const EMPTY_MEAL_FORM = { name: '', calories: '', protein: '', carbs: '', fat: '' };
 
 function kindColor(kind: Kind) {
-  return kind === "workout" ? activityColors.fitness : activityColors.nutrition;
+  return kind === "exercise" ? activityColors.fitness : activityColors.nutrition;
+}
+
+// "1 sets" reads as a typo, so the count carries its own plural.
+function plural(value: number, unit: string) {
+  return `${value} ${unit}${value === 1 ? '' : 's'}`;
+}
+
+// Every measurement is named - "4 sets × 8 reps @ 155 lbs", "32 min 45 sec" -
+// rather than leaving the reader to infer what "4 × 8 @ 155" or "32:45" counts.
+// Only what the row carries is printed: a bodyweight exercise doesn't claim
+// "@ 0 lbs", a round half-hour run doesn't trail "0 sec", and a row holding both
+// kinds of measurement - a loaded carry, say - lists both.
+function exerciseDetail(row: ExerciseRow) {
+  const parts: string[] = [];
+
+  if (row.sets > 0 || row.reps > 0 || row.weight > 0) {
+    const effort: string[] = [];
+    if (row.sets > 0) effort.push(plural(row.sets, 'set'));
+    if (row.reps > 0) effort.push(plural(row.reps, 'rep'));
+
+    const counts = effort.join(' × ');
+    // The weight hangs off the counts, but stands alone if there are none.
+    if (row.weight > 0) {
+      parts.push(counts ? `${counts} @ ${row.weight} lbs` : `${row.weight} lbs`);
+    } else {
+      parts.push(counts);
+    }
+  }
+
+  if (row.seconds > 0) {
+    const minutes = Math.floor(row.seconds / 60);
+    const seconds = row.seconds % 60;
+    const duration: string[] = [];
+    // "min" and "sec" are abbreviations, so they don't take a plural.
+    if (minutes > 0) duration.push(`${minutes} min`);
+    if (seconds > 0) duration.push(`${seconds} sec`);
+    parts.push(duration.join(' '));
+  }
+
+  return parts.join(' · ');
 }
 
 // Every step of the add flow is the same box: the three-slot back / title /
@@ -129,7 +171,7 @@ export default function DaySummary() {
 
   const [step, setStep] = useState<Step | null>(null);
   const [activeSummary, setActiveSummary] = useState<"nutrition" | "fitness">("nutrition");
-  const [workoutFormInfo, setWorkoutFormInfo] = useState(EMPTY_WORKOUT_FORM);
+  const [exerciseFormInfo, setExerciseFormInfo] = useState(EMPTY_EXERCISE_FORM);
   const [mealFormInfo, setMealFormInfo] = useState(EMPTY_MEAL_FORM);
 
   // Read when a picker opens rather than on mount, so an entry added on the
@@ -190,23 +232,23 @@ export default function DaySummary() {
   // Steps forward. Each one seeds whatever the step it opens needs, so no step
   // ever renders against the previous step's leftovers.
   function openNewEntry(kind: Kind) {
-    if (kind === "workout") setWorkoutFormInfo(EMPTY_WORKOUT_FORM);
+    if (kind === "exercise") setExerciseFormInfo(EMPTY_EXERCISE_FORM);
     else setMealFormInfo(EMPTY_MEAL_FORM);
     setStep({ name: "newEntry", kind });
   }
 
   function openSavedPicker(kind: Kind) {
-    if (kind === "workout") setSavedExercises(getSavedExercises());
+    if (kind === "exercise") setSavedExercises(getSavedExercises());
     else setSavedMeals(getSavedMeals());
     setStep({ name: "savedPicker", kind });
   }
 
   // A saved exercise is only a name, so it still needs its metrics. The name is
-  // carried in the same form state the new-workout step uses and shown
+  // carried in the same form state the new-exercise step uses and shown
   // read-only, so the two steps share one set of fields.
-  function openSavedExercise(exercise: SavedExercise) {
-    setWorkoutFormInfo({ ...EMPTY_WORKOUT_FORM, name: exercise.name });
-    setStep({ name: "savedExercise", exercise });
+  function openSavedExerciseMetrics(exercise: SavedExercise) {
+    setExerciseFormInfo({ ...EMPTY_EXERCISE_FORM, name: exercise.name });
+    setStep({ name: "savedExerciseMetrics", exercise });
   }
 
   // One step back, or out of the flow entirely from the first step.
@@ -220,19 +262,22 @@ export default function DaySummary() {
       case "newEntry":
       case "savedPicker":
         return setStep({ name: "chooseSource", kind: step.kind });
-      case "savedExercise":
-        return setStep({ name: "savedPicker", kind: "workout" });
+      case "savedExerciseMetrics":
+        return setStep({ name: "savedPicker", kind: "exercise" });
     }
   }
 
-  function saveWorkout() {
-    const name = workoutFormInfo.name.trim();
+  function saveExercise() {
+    const name = exerciseFormInfo.name.trim();
     if (name === '') return;
     insertExercise(
       date, name,
-      toInt(workoutFormInfo.sets),
-      toInt(workoutFormInfo.reps),
-      toNumber(workoutFormInfo.weight)
+      toInt(exerciseFormInfo.sets),
+      toInt(exerciseFormInfo.reps),
+      toNumber(exerciseFormInfo.weight),
+      // The two duration fields are one value in the database; either alone is
+      // valid, so "90" seconds with no minutes stores as 90 rather than nothing.
+      toInt(exerciseFormInfo.minutes) * 60 + toInt(exerciseFormInfo.seconds)
     );
     setStep(null);
     loadDay();
@@ -370,9 +415,7 @@ export default function DaySummary() {
           renderItem={({ item }) => (
             <View style={styles.listRow}>
               <Text style={styles.listRowTitle}>{item.name}</Text>
-              <Text style={styles.listRowDetail}>
-                {item.sets} × {item.reps} @ {item.weight} lbs
-              </Text>
+              <Text style={styles.listRowDetail}>{exerciseDetail(item)}</Text>
             </View>
           )}
         />
@@ -383,10 +426,10 @@ export default function DaySummary() {
       <ModalStep title="Add Entry" onClose={() => setStep(null)}>
         <View style={styles.modalBody}>
           <ChoiceButton
-            label="Add Workout"
+            label="Add Exercise"
             icon="barbell"
-            color={kindColor("workout")}
-            onPress={() => setStep({ name: "chooseSource", kind: "workout" })}
+            color={kindColor("exercise")}
+            onPress={() => setStep({ name: "chooseSource", kind: "exercise" })}
           />
           <ChoiceButton
             label="Add Meal"
@@ -402,19 +445,19 @@ export default function DaySummary() {
           the colour of the kind chosen in step 1, so the branch stays visible. */}
       {step?.name === "chooseSource" && (
       <ModalStep
-        title={step.kind === "workout" ? "Add Workout" : "Add Meal"}
+        title={step.kind === "exercise" ? "Add Exercise" : "Add Meal"}
         onBack={stepBack}
         onClose={() => setStep(null)}
       >
         <View style={styles.modalBody}>
           <ChoiceButton
-            label={step.kind === "workout" ? "Add New Workout" : "Add New Meal"}
+            label={step.kind === "exercise" ? "Add New Exercise" : "Add New Meal"}
             icon="create"
             color={kindColor(step.kind)}
             onPress={() => openNewEntry(step.kind)}
           />
           <ChoiceButton
-            label={step.kind === "workout" ? "Add Saved Workout" : "Add Saved Meal"}
+            label={step.kind === "exercise" ? "Add Saved Exercise" : "Add Saved Meal"}
             icon="bookmark"
             color={kindColor(step.kind)}
             onPress={() => openSavedPicker(step.kind)}
@@ -428,12 +471,12 @@ export default function DaySummary() {
           macros - while an exercise goes on to its metrics. */}
       {step?.name === "savedPicker" && (
       <ModalStep
-        title={step.kind === "workout" ? "Choose Saved Workout" : "Choose Saved Meal"}
+        title={step.kind === "exercise" ? "Choose Saved Exercise" : "Choose Saved Meal"}
         onBack={stepBack}
         onClose={() => setStep(null)}
       >
         <ScrollView>
-          {step.kind === "workout" ? (
+          {step.kind === "exercise" ? (
             savedExercises.length === 0 ? (
               <Text style={styles.emptyListText}>No saved exercises yet. Add one on the Saved tab.</Text>
             ) : (
@@ -441,7 +484,7 @@ export default function DaySummary() {
                 <TouchableOpacity
                   key={exercise.id}
                   style={styles.listRow}
-                  onPress={() => openSavedExercise(exercise)}
+                  onPress={() => openSavedExerciseMetrics(exercise)}
                 >
                   <Text style={styles.listRowTitle}>{exercise.name}</Text>
                 </TouchableOpacity>
@@ -469,17 +512,16 @@ export default function DaySummary() {
       </ModalStep>
       )}
 
-      {/* Workout form, shared by the new and saved paths. The fields are the
+      {/* Exercise form, shared by the new and saved paths. The fields are the
           same either way; the two differ only in the title and in whether the
           name is typed or fixed by the library entry - the pattern the Saved
-          tab's add/edit meal form already uses. A saved workout needs no name
-          field, so it fits a content-sized sheet rather than the tall box. */}
-      {(step?.name === "savedExercise" || (step?.name === "newEntry" && step.kind === "workout")) && (
+          tab's add/edit meal form already uses. */}
+      {(step?.name === "savedExerciseMetrics" || (step?.name === "newEntry" && step.kind === "exercise")) && (
       <ModalStep
-        title={step.name === "savedExercise" ? "Add Saved Workout" : "Add New Workout"}
+        title={step.name === "savedExerciseMetrics" ? "Add Saved Exercise" : "Add New Exercise"}
         onBack={stepBack}
         onClose={() => setStep(null)}
-        box={step.name === "savedExercise" ? styles.modalSheet : styles.modalBox}
+        box={styles.modalBox}
       >
         {/* Scrolled so the fields aren't clipped by the box on a short screen,
             and so the save button can be reached with the keyboard up.
@@ -487,16 +529,16 @@ export default function DaySummary() {
             it on dismissing the keyboard. */}
         <ScrollView contentContainerStyle={styles.modalForm} keyboardShouldPersistTaps="handled">
 
-          <Text style={styles.fieldLabel}>Workout Name</Text>
-          {step.name === "savedExercise" ? (
+          <Text style={styles.fieldLabel}>Exercise Name</Text>
+          {step.name === "savedExerciseMetrics" ? (
             <Text style={styles.readOnlyTextBox}>{step.exercise.name}</Text>
           ) : (
             <TextInput
-            placeholder="Workout Name"
+            placeholder="Exercise Name"
             placeholderTextColor="#3a3f45"
             style={styles.inputTextBox}
-            value={workoutFormInfo.name}
-            onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, name: text})}
+            value={exerciseFormInfo.name}
+            onChangeText={(text) => setExerciseFormInfo({...exerciseFormInfo, name: text})}
             />
           )}
 
@@ -506,8 +548,8 @@ export default function DaySummary() {
           placeholderTextColor="#3a3f45"
           keyboardType="numeric"
           style={styles.inputTextBox}
-          value={workoutFormInfo.weight}
-          onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, weight: text})}
+          value={exerciseFormInfo.weight}
+          onChangeText={(text) => setExerciseFormInfo({...exerciseFormInfo, weight: text})}
           />
 
           <Text style={styles.fieldLabel}>Sets</Text>
@@ -516,8 +558,8 @@ export default function DaySummary() {
           placeholderTextColor="#3a3f45"
           keyboardType="numeric"
           style={styles.inputTextBox}
-          value={workoutFormInfo.sets}
-          onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, sets: text})}
+          value={exerciseFormInfo.sets}
+          onChangeText={(text) => setExerciseFormInfo({...exerciseFormInfo, sets: text})}
           />
 
           <Text style={styles.fieldLabel}>Reps</Text>
@@ -526,12 +568,36 @@ export default function DaySummary() {
           placeholderTextColor="#3a3f45"
           keyboardType="numeric"
           style={styles.inputTextBox}
-          value={workoutFormInfo.reps}
-          onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, reps: text})}
+          value={exerciseFormInfo.reps}
+          onChangeText={(text) => setExerciseFormInfo({...exerciseFormInfo, reps: text})}
           />
 
-          <TouchableOpacity style={styles.entryButton} onPress={saveWorkout}>
-            <Text style={[styles.text, { textAlign: "center" }]}>Add Workout</Text>
+          {/* For exercises measured by duration rather than by sets - a run, a
+              plank. Left blank for a lift; the hint says so, since an untouched
+              pair of boxes otherwise looks like something was missed. */}
+          <Text style={styles.fieldLabel}>Time</Text>
+          <View style={styles.fieldRow}>
+            <TextInput
+            placeholder="Minutes"
+            placeholderTextColor="#3a3f45"
+            keyboardType="numeric"
+            style={[styles.inputTextBox, styles.fieldHalf]}
+            value={exerciseFormInfo.minutes}
+            onChangeText={(text) => setExerciseFormInfo({...exerciseFormInfo, minutes: text})}
+            />
+            <TextInput
+            placeholder="Seconds"
+            placeholderTextColor="#3a3f45"
+            keyboardType="numeric"
+            style={[styles.inputTextBox, styles.fieldHalf]}
+            value={exerciseFormInfo.seconds}
+            onChangeText={(text) => setExerciseFormInfo({...exerciseFormInfo, seconds: text})}
+            />
+          </View>
+          <Text style={styles.fieldHint}>Leave blank for exercises measured in sets and reps.</Text>
+
+          <TouchableOpacity style={styles.entryButton} onPress={saveExercise}>
+            <Text style={[styles.text, { textAlign: "center" }]}>Add Exercise</Text>
           </TouchableOpacity>
 
         </ScrollView>

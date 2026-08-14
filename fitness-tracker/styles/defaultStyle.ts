@@ -396,6 +396,23 @@ export const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
+  // Two inputs sharing a line under one label - the minutes/seconds pair. The
+  // gap comes from the row, so the boxes keep inputTextBox's own margins.
+  fieldRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  fieldHalf: {
+    flex: 1,
+  },
+  // Sits under a field to say when it applies. Muted and small, so it reads as
+  // guidance rather than as another label.
+  fieldHint: {
+    color: "#8a9199",
+    fontSize: 11,
+    marginTop: -8,
+    marginBottom: 16,
+  },
   inputTextBox: {
     borderWidth: 1,
     borderColor: "#3a3f45",

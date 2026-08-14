@@ -19,6 +19,39 @@ exercisesDB.execSync(`
   );
 `);
 
+// Schema changes to the exercises database, tracked with PRAGMA user_version.
+// The CREATE TABLE above is deliberately left at its original shape: declaring
+// `seconds` there as well would make the ALTER below throw "duplicate column" on
+// a fresh install, so a new database and an existing one reach v1 the same way.
+const EXERCISES_SCHEMA_VERSION = 1;
+
+function migrateExercisesDB() {
+  const row = exercisesDB.getFirstSync<{ user_version: number }>('PRAGMA user_version');
+  const version = row?.user_version ?? 0;
+  if (version >= EXERCISES_SCHEMA_VERSION) return;
+
+  if (version < 1) {
+    // Duration, for exercises that aren't measured in sets and reps - running and
+    // the like. Whole seconds, so the minutes and seconds fields round-trip
+    // exactly; 0 means the row simply isn't a timed one.
+    exercisesDB.execSync('ALTER TABLE exercises ADD COLUMN seconds INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // A pragma can't take a bound parameter, so the version is interpolated - it's
+  // a module constant, never anything from outside.
+  exercisesDB.execSync(`PRAGMA user_version = ${EXERCISES_SCHEMA_VERSION}`);
+}
+
+migrateExercisesDB();
+
+// A row of the dated exercise log. `seconds` and the sets/reps/weight trio are
+// alternatives rather than companions: a row usually carries one or the other,
+// and which one it carries is what decides how it's shown and graphed.
+export type ExerciseRow = {
+  id: number; date: string; name: string;
+  sets: number; reps: number; weight: number; seconds: number;
+};
+
 mealsDB.execSync(`
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS meals (
@@ -40,23 +73,21 @@ mealsDB.execSync(`
   );
 `);
 
-function insertExercise(date: string, name: string, sets: number, reps: number, weight: number) {
+function insertExercise(
+  date: string, name: string, sets: number, reps: number, weight: number, seconds: number
+) {
   exercisesDB.runSync(
-    'INSERT INTO exercises (date, name, sets, reps, weight) VALUES (?, ?, ?, ?, ?)',
-    [date, name, sets, reps, weight]
+    'INSERT INTO exercises (date, name, sets, reps, weight, seconds) VALUES (?, ?, ?, ?, ?, ?)',
+    [date, name, sets, reps, weight, seconds]
   );
 }
 
 function getExercises(name: string) {
-  return exercisesDB.getAllSync<{
-    id: number; date: string; name: string; sets: number; reps: number; weight: number;
-  }>('SELECT * FROM exercises WHERE name = ?', [name]);
+  return exercisesDB.getAllSync<ExerciseRow>('SELECT * FROM exercises WHERE name = ?', [name]);
 }
 
 function getExerciseDateInfo(date: string) {
-  return exercisesDB.getAllSync<{
-    id: number; date: string; name: string; sets: number; reps: number; weight: number;
-  }>('SELECT * FROM exercises WHERE date = ?', [date]);
+  return exercisesDB.getAllSync<ExerciseRow>('SELECT * FROM exercises WHERE date = ?', [date]);
 }
 
 function insertMeal(date: string, name: string, calories: number, protein: number, carbs: number, fat: number) {
@@ -127,7 +158,7 @@ function deleteSavedExercise(id: number) {
 
 // Chart queries. Both roll rows up per date, so days with no entries are simply
 // absent from the result rather than coming back as 0 - the graph draws those as
-// gaps, since a rest day isn't a zero-volume workout.
+// gaps, since a rest day isn't a zero-volume exercise.
 export type SeriesPoint = { date: string; value: number };
 
 export type NutritionMetric = 'Calories' | 'Protein' | 'Carbs' | 'Fat';
@@ -140,10 +171,6 @@ const NUTRITION_COLUMNS: Record<NutritionMetric, string> = {
   Carbs: 'carbs',
   Fat: 'fat',
 };
-
-export function isNutritionMetric(metric: string): metric is NutritionMetric {
-  return metric in NUTRITION_COLUMNS;
-}
 
 // Dates are stored as YYYY-MM-DD strings, so BETWEEN compares them lexicographically.
 export function toDateString(date: Date) {
@@ -180,10 +207,18 @@ function getExerciseCountsInRange(startDate: string, endDate: string) {
   );
 }
 
-function getLoggedExerciseNames() {
-  return exercisesDB
-    .getAllSync<{ name: string }>('SELECT DISTINCT name FROM exercises ORDER BY name')
-    .map((row) => row.name);
+// What each logged exercise can be plotted as. An exercise measured in sets and
+// reps has volume, one measured in duration has time, and a few carry both - the
+// graph offers those twice rather than guessing which one was meant.
+export type ExerciseMetricInfo = { name: string; hasVolume: number; hasTime: number };
+
+function getExerciseMetricInfo() {
+  return exercisesDB.getAllSync<ExerciseMetricInfo>(
+    `SELECT name,
+       MAX(CASE WHEN sets > 0 OR reps > 0 OR weight > 0 THEN 1 ELSE 0 END) AS hasVolume,
+       MAX(CASE WHEN seconds > 0 THEN 1 ELSE 0 END) AS hasTime
+     FROM exercises GROUP BY name ORDER BY name`
+  );
 }
 
 function getNutritionSeries(metric: NutritionMetric, startDate: string, endDate: string) {
@@ -194,21 +229,41 @@ function getNutritionSeries(metric: NutritionMetric, startDate: string, endDate:
   );
 }
 
+// The weighted rows are filtered in rather than summed over everything: without
+// it a day holding only a timed row of this exercise would sum to 0 and draw as
+// a real zero, when it should be one of the gaps this query exists to leave.
 function getExerciseVolumeSeries(name: string, startDate: string, endDate: string) {
   return exercisesDB.getAllSync<SeriesPoint>(
     `SELECT date, SUM(sets * reps * weight) AS value FROM exercises
-     WHERE name = ? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date`,
+     WHERE name = ? AND (sets > 0 OR reps > 0 OR weight > 0)
+       AND date BETWEEN ? AND ? GROUP BY date ORDER BY date`,
+    [name, startDate, endDate]
+  );
+}
+
+// Minutes rather than raw seconds, so the axis lands on numbers a person reads -
+// niceScale would otherwise be picking ticks out of five figures.
+function getExerciseTimeSeries(name: string, startDate: string, endDate: string) {
+  return exercisesDB.getAllSync<SeriesPoint>(
+    `SELECT date, SUM(seconds) / 60.0 AS value FROM exercises
+     WHERE name = ? AND seconds > 0
+       AND date BETWEEN ? AND ? GROUP BY date ORDER BY date`,
     [name, startDate, endDate]
   );
 }
 
 // The rows behind one point of an exercise volume series. Queried only when a
 // point is selected, so the series query itself stays a plain GROUP BY rollup.
-export type ExerciseEntry = { sets: number; reps: number; weight: number };
+export type ExerciseEntry = { sets: number; reps: number; weight: number; seconds: number };
 
-function getExerciseEntriesForDate(name: string, date: string) {
+// Filtered to the kind being plotted, so the breakdown lists the rows that
+// actually add up to the point above it. The condition is picked from a closed
+// union rather than built from anything passed in.
+function getExerciseEntriesForDate(name: string, date: string, kind: 'volume' | 'time') {
+  const condition = kind === 'time' ? 'seconds > 0' : '(sets > 0 OR reps > 0 OR weight > 0)';
   return exercisesDB.getAllSync<ExerciseEntry>(
-    'SELECT sets, reps, weight FROM exercises WHERE name = ? AND date = ? ORDER BY id',
+    `SELECT sets, reps, weight, seconds FROM exercises
+     WHERE name = ? AND date = ? AND ${condition} ORDER BY id`,
     [name, date]
   );
 }
@@ -224,5 +279,5 @@ function clearMealDatabase() {
 }
 
 export function useDatabase() {
-  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, updateSavedMeal, deleteSavedMeal, deleteSavedExercise, getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate, getMealCountsInRange, getExerciseCountsInRange };
+  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, updateSavedMeal, deleteSavedMeal, deleteSavedExercise, getExerciseMetricInfo, getNutritionSeries, getExerciseVolumeSeries, getExerciseTimeSeries, getExerciseEntriesForDate, getMealCountsInRange, getExerciseCountsInRange };
 }

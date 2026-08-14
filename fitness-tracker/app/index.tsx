@@ -29,6 +29,16 @@ const EXERCISE_TEMPLATES = [
   { name: 'Overhead Press', sets: 4, reps: 8, startWeight: 95, gainPerWeek: 1.5 },
 ];
 
+// A duration-measured exercise, so the time path has something to plot without
+// hand-entry. Seeded on its own cadence rather than folded into the lifting
+// split above, since a run isn't one of the four rotating slots. Climbs from
+// ~28 to ~45 minutes across the range so the line trends rather than wanders.
+const RUN = {
+  name: 'Running',
+  startSeconds: 28 * 60,
+  gainPerWeek: 60,
+};
+
 function seedDatabase(db: ReturnType<typeof useDatabase>) {
   db.clearExerciseDatabase();
   db.clearMealDatabase();
@@ -50,17 +60,27 @@ function seedDatabase(db: ReturnType<typeof useDatabase>) {
       db.insertMeal(dateString, meal.name, meal.calories, meal.protein, meal.carbs, meal.fat);
     }
 
+    const weeksElapsed = (SEED_DAYS - 1 - daysAgo) / 7;
+
+    // Runs land on their own cadence, so some days carry a run and a lift and
+    // some carry only one - which is what an exercise measured by duration
+    // rather than by sets looks like alongside a lifting split.
+    if (daysAgo % 3 === 1) {
+      const seconds = Math.round(RUN.startSeconds + weeksElapsed * RUN.gainPerWeek);
+      db.insertExercise(dateString, RUN.name, 0, 0, 0, seconds);
+    }
+
     // One lift per training day, four days on / one day off.
     if (daysAgo % 5 === 4) continue;
     const exercise = EXERCISE_TEMPLATES[daysAgo % EXERCISE_TEMPLATES.length];
-    const weeksElapsed = (SEED_DAYS - 1 - daysAgo) / 7;
     const weight = Math.round(exercise.startWeight + weeksElapsed * exercise.gainPerWeek);
-    db.insertExercise(dateString, exercise.name, exercise.sets, exercise.reps, weight);
+    db.insertExercise(dateString, exercise.name, exercise.sets, exercise.reps, weight, 0);
   }
 
   // Saved libraries survive the clears above, so these are INSERT OR IGNORE no-ops
   // after the first run.
   EXERCISE_TEMPLATES.forEach((exercise) => db.insertSavedExercise(exercise.name));
+  db.insertSavedExercise(RUN.name);
   MEAL_TEMPLATES.forEach((meal) =>
     db.insertSavedMeal(meal.name, meal.calories, meal.protein, meal.carbs, meal.fat)
   );

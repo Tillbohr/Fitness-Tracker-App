@@ -8,9 +8,34 @@ import { styles, activityColors } from "../../styles/defaultStyle";
 import { CartesianChart, Line, Area, useChartPressState, type CartesianActionsHandle } from "victory-native";
 import { Circle, LinearGradient, vec } from "@shopify/react-native-skia";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useDatabase, isNutritionMetric, toDateString, fromDateString } from "../../database";
+import {
+  useDatabase, toDateString, fromDateString,
+  type NutritionMetric, type ExerciseMetricInfo,
+} from "../../database";
+import { formatDuration } from "../../utils/duration";
 
-const nutritionMetrics = ['Calories', 'Protein', 'Carbs', 'Fat'];
+const nutritionMetrics = ['Calories', 'Protein', 'Carbs', 'Fat'] as const;
+
+// What the chart is plotting. An exercise is no longer just a name: the same
+// name can be measured as volume, as duration, or - for the odd loaded carry -
+// both, and the two are different quantities on different axes.
+type Metric =
+  | { kind: 'nutrition'; name: NutritionMetric }
+  | { kind: 'volume'; name: string }
+  | { kind: 'time'; name: string };
+
+// Identity for React keys and for comparing the selection against the list;
+// name alone would collide for an exercise offered as both volume and time.
+function metricKey(metric: Metric) {
+  return `${metric.kind}:${metric.name}`;
+}
+
+// The kind is only spelled out when an exercise appears twice, so the common
+// case - an exercise measured one way - keeps its plain name in the list.
+function metricLabel(metric: Metric, ambiguous: boolean) {
+  if (!ambiguous) return metric.name;
+  return `${metric.name} (${metric.kind === 'time' ? 'time' : 'volume'})`;
+}
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -33,9 +58,10 @@ function formatFullDate(date: Date) {
   return `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
 }
 
-function unitFor(metric: string) {
-  if (metric === 'Calories') return '';
-  return isNutritionMetric(metric) ? ' g' : ' lbs';
+function unitFor(metric: Metric) {
+  if (metric.kind === 'time') return '';
+  if (metric.kind === 'volume') return ' lbs';
+  return metric.name === 'Calories' ? '' : ' g';
 }
 
 const timeframes = {
@@ -62,8 +88,8 @@ const timeframeLabels: Record<Timeframe, string> = {
 // identity rather than a slot in a categorical palette: nutrition takes the
 // app's amber, an exercise the accent blue - the pairing the calendar badges and
 // the day toggles already use. Both clear 3:1 against the #25292e surface.
-function seriesColorFor(metric: string) {
-  return isNutritionMetric(metric) ? activityColors.nutrition : activityColors.fitness;
+function seriesColorFor(metric: Metric) {
+  return metric.kind === 'nutrition' ? activityColors.nutrition : activityColors.fitness;
 }
 
 // Skia's colour parser is happiest with rgba(), so the shared hex tokens are
@@ -155,40 +181,66 @@ export function niceScale(values: number[]): { domain: [number, number]; tickCou
   };
 }
 
-// Nutrition rolls up as a per-day total of whatever the meal rows recorded; an
-// exercise rolls up as sets x reps x weight, so the caption has to say which.
-// This doubles as the y axis title: it already names the quantity and its unit,
-// so a separate axis label down the left would only repeat it for 54px of width.
-function captionFor(metric: string) {
-  if (metric === 'Calories') return 'Daily total calories';
-  if (isNutritionMetric(metric)) return `Daily total ${metric.toLowerCase()} (g)`;
-  return 'Daily total volume - sets x reps x weight (lbs)';
+// Nutrition rolls up as a per-day total of whatever the meal rows recorded, a
+// weighted exercise as sets x reps x weight, a timed one as minutes - so the
+// caption has to say which. This doubles as the y axis title: it already names
+// the quantity and its unit, so a separate label down the left of the plot
+// would only repeat it for 54px of width.
+function captionFor(metric: Metric) {
+  if (metric.kind === 'time') return 'Daily total time (minutes)';
+  if (metric.kind === 'volume') return 'Daily total volume - sets x reps x weight (lbs)';
+  if (metric.name === 'Calories') return 'Daily total calories';
+  return `Daily total ${metric.name.toLowerCase()} (g)`;
 }
 
 export default function Graphs() {
   const insets = useSafeAreaInsets();
   const {
-    getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate,
+    getExerciseMetricInfo, getNutritionSeries, getExerciseVolumeSeries,
+    getExerciseTimeSeries, getExerciseEntriesForDate,
   } = useDatabase();
 
   const [metricOpen, setMetricOpen] = useState(false);
-  const [selectedMetric, setSelectedMetric] = useState('Calories');
+  const [selectedMetric, setSelectedMetric] = useState<Metric>({ kind: 'nutrition', name: 'Calories' });
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('30 Days');
-  const [exerciseNames, setExerciseNames] = useState<string[]>([]);
+  const [exerciseInfo, setExerciseInfo] = useState<ExerciseMetricInfo[]>([]);
 
   // Drives the line, the area wash, the active timeframe segment and the
   // tooltip's edge, so the whole screen shifts with the metric.
   const seriesColor = seriesColorFor(selectedMetric);
 
-  // Tab screens stay mounted, so a workout logged over on the calendar tab would
-  // never reach a mount-only effect - reload the list every time this tab focuses.
+  // Tab screens stay mounted, so an exercise logged over on the calendar tab
+  // would never reach a mount-only effect - reload every time this tab focuses.
   useFocusEffect(
     useCallback(() => {
-      setExerciseNames(getLoggedExerciseNames());
-    }, [getLoggedExerciseNames])
+      setExerciseInfo(getExerciseMetricInfo());
+    }, [getExerciseMetricInfo])
   );
 
-  const metrics = [...nutritionMetrics, ...exerciseNames];
+  // An exercise contributes one entry per way it was measured. Only the ones
+  // measured both ways get their kind spelled out in the label.
+  const metrics = useMemo(() => {
+    const list: { metric: Metric; label: string }[] = nutritionMetrics.map((name) => ({
+      metric: { kind: 'nutrition', name },
+      label: name,
+    }));
+
+    for (const info of exerciseInfo) {
+      const ambiguous = info.hasVolume === 1 && info.hasTime === 1;
+      if (info.hasVolume === 1) {
+        const metric: Metric = { kind: 'volume', name: info.name };
+        list.push({ metric, label: metricLabel(metric, ambiguous) });
+      }
+      if (info.hasTime === 1) {
+        const metric: Metric = { kind: 'time', name: info.name };
+        list.push({ metric, label: metricLabel(metric, ambiguous) });
+      }
+    }
+    return list;
+  }, [exerciseInfo]);
+
+  const selectedLabel = metrics.find((m) => metricKey(m.metric) === metricKey(selectedMetric))?.label
+    ?? selectedMetric.name;
 
   const days = timeframes[selectedTimeframe];
 
@@ -203,9 +255,12 @@ export default function Graphs() {
     const start = new Date(end);
     start.setDate(start.getDate() - (days - 1));
 
-    const series = isNutritionMetric(selectedMetric)
-      ? getNutritionSeries(selectedMetric, toDateString(start), toDateString(end))
-      : getExerciseVolumeSeries(selectedMetric, toDateString(start), toDateString(end));
+    const series =
+      selectedMetric.kind === 'nutrition'
+        ? getNutritionSeries(selectedMetric.name, toDateString(start), toDateString(end))
+        : selectedMetric.kind === 'time'
+          ? getExerciseTimeSeries(selectedMetric.name, toDateString(start), toDateString(end))
+          : getExerciseVolumeSeries(selectedMetric.name, toDateString(start), toDateString(end));
 
     return {
       rangeStart: start,
@@ -217,7 +272,7 @@ export default function Graphs() {
         value: point.value,
       })),
     };
-  }, [selectedMetric, days, getNutritionSeries, getExerciseVolumeSeries]);
+  }, [selectedMetric, days, getNutritionSeries, getExerciseVolumeSeries, getExerciseTimeSeries]);
 
   const yScale = useMemo(() => niceScale(chartData.map((point) => point.value)), [chartData]);
 
@@ -291,8 +346,8 @@ export default function Graphs() {
   const selectedPoint = selection ? series[selection.index] : undefined;
 
   const selectedEntries = useMemo(() => {
-    if (!selectedPoint || isNutritionMetric(selectedMetric)) return [];
-    return getExerciseEntriesForDate(selectedMetric, selectedPoint.date);
+    if (!selectedPoint || selectedMetric.kind === 'nutrition') return [];
+    return getExerciseEntriesForDate(selectedMetric.name, selectedPoint.date, selectedMetric.kind);
   }, [selectedPoint, selectedMetric, getExerciseEntriesForDate]);
 
   // Flip to the point's left near the right edge, and above it near the bottom,
@@ -327,7 +382,7 @@ export default function Graphs() {
             style={graphStyle.dropdownButton}
             onPress={() => setMetricOpen(!metricOpen)}
           >
-            <Text style={styles.text}>{selectedMetric}</Text>
+            <Text style={styles.text}>{selectedLabel}</Text>
             <Ionicons
               name={metricOpen ? "chevron-up" : "chevron-down"}
               size={16}
@@ -338,13 +393,13 @@ export default function Graphs() {
             <View style={graphStyle.dropdownList}>
               {/* The exercise half of this list grows with whatever has been logged */}
               <ScrollView style={graphStyle.dropdownScroll} nestedScrollEnabled>
-                {metrics.map(m => (
+                {metrics.map(({ metric, label }) => (
                   <TouchableOpacity
-                    key={m}
+                    key={metricKey(metric)}
                     style={graphStyle.dropdownItem}
-                    onPress={() => { setSelectedMetric(m); setMetricOpen(false); }}
+                    onPress={() => { setSelectedMetric(metric); setMetricOpen(false); }}
                   >
-                    <Text style={styles.text}>{m}</Text>
+                    <Text style={styles.text}>{label}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -389,7 +444,7 @@ export default function Graphs() {
       >
         {chartData.length === 0 ? (
           <Text style={styles.emptyListText}>
-            No {selectedMetric} entries in the last {selectedTimeframe.toLowerCase()}.
+            No {selectedLabel} entries in the last {selectedTimeframe.toLowerCase()}.
           </Text>
         ) : (
           <CartesianChart
@@ -510,17 +565,25 @@ export default function Graphs() {
             </Text>
 
             <Text style={graphStyle.tooltipLabel}>
-              {isNutritionMetric(selectedMetric) ? selectedMetric : 'Total volume'}
+              {selectedMetric.kind === 'nutrition' ? selectedMetric.name
+                : selectedMetric.kind === 'time' ? 'Total time' : 'Total volume'}
             </Text>
+            {/* The series carries minutes so the axis reads well, but a headline
+                duration is clearer as mm:ss than as "32.8 min" - and the value
+                is exact, since the minutes came from whole seconds. */}
             <Text style={graphStyle.tooltipValue}>
-              {formatNumber(selectedPoint.value)}{unitFor(selectedMetric)}
+              {selectedMetric.kind === 'time'
+                ? formatDuration(selectedPoint.value * 60)
+                : `${formatNumber(selectedPoint.value)}${unitFor(selectedMetric)}`}
             </Text>
 
             {selectedEntries.length > 0 && (
               <View style={graphStyle.tooltipBreakdown}>
                 {selectedEntries.map((entry, index) => (
                   <Text key={index} style={graphStyle.tooltipEntry}>
-                    {entry.sets} × {entry.reps} @ {formatNumber(entry.weight)} lbs
+                    {selectedMetric.kind === 'time'
+                      ? formatDuration(entry.seconds)
+                      : `${entry.sets} × ${entry.reps} @ ${formatNumber(entry.weight)} lbs`}
                   </Text>
                 ))}
               </View>
