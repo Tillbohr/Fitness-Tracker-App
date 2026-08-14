@@ -1,12 +1,13 @@
-import { Text, View, FlatList, TouchableOpacity, Modal, TextInput } from "react-native";
+import { Text, View, FlatList, ScrollView, TouchableOpacity, Modal, TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { PolarChart, Pie } from "victory-native";
 import { styles, activityColors } from "../../styles/defaultStyle";
-import { useDatabase } from "../../database";
+import { useDatabase, SavedExercise, SavedMeal } from "../../database";
 import { formatDateLong } from "../../utils/dates";
+import { toInt, toNumber } from "../../utils/numbers";
 
 // Slices are sized by calorie contribution, not grams, so the three add up to the
 // day's calories - a gram of fat carries more than twice the energy of a gram of
@@ -26,10 +27,95 @@ const MACRO_COLORS = {
 // Matches styles.pieWrap, which reserves the same box for the empty-day message.
 const PIE_SIZE = 150;
 
-type ModalType = "addEntry" | "workout" | "meal" | null;
+// Icon colour for glyphs sitting on an activityColors fill. The same value as
+// styles.textOnLightFill, repeated because Ionicons takes a colour prop rather
+// than a style.
+const ON_LIGHT_FILL = "#25292e";
+
+type Kind = "workout" | "meal";
+
+// The add flow as one value rather than a flag per modal, so a step can never be
+// open without the kind it belongs to - the same reason the Saved tab holds its
+// pending delete as an object. Steps run:
+//   chooseKind -> chooseSource -> newEntry
+//                              -> savedPicker -> savedExercise (workouts only;
+//                                                a saved meal already carries
+//                                                its macros, so tapping it logs)
+type Step =
+  | { name: "chooseKind" }
+  | { name: "chooseSource"; kind: Kind }
+  | { name: "newEntry"; kind: Kind }
+  | { name: "savedPicker"; kind: Kind }
+  | { name: "savedExercise"; exercise: SavedExercise };
 
 const EMPTY_WORKOUT_FORM = { name: '', weight: '', sets: '', reps: '' };
 const EMPTY_MEAL_FORM = { name: '', calories: '', protein: '', carbs: '', fat: '' };
+
+function kindColor(kind: Kind) {
+  return kind === "workout" ? activityColors.fitness : activityColors.nutrition;
+}
+
+// Every step of the add flow is the same box: the three-slot back / title /
+// close header the day screen itself uses, over the step's content. The first
+// step has nothing to go back to, so its left slot renders empty - but still at
+// the same fixed width, which is what keeps the title centred.
+function ModalStep({ title, onBack, onClose, box = styles.modalSheet, children }: {
+  title: string;
+  onBack?: () => void;
+  onClose: () => void;
+  box?: object;
+  children: ReactNode;
+}) {
+  return (
+    <Modal visible transparent animationType="none">
+      <View style={styles.modalBackdrop}>
+        <View style={box}>
+
+          <View style={styles.modalHeader}>
+            <View style={styles.headerButton}>
+              {onBack && (
+                <TouchableOpacity onPress={onBack} hitSlop={10}>
+                  <Ionicons name="chevron-back" size={22} color="#ffffff" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <Text style={[styles.text, { fontSize: 16 }]}>{title}</Text>
+
+            <View style={styles.headerButton}>
+              <TouchableOpacity onPress={onClose} hitSlop={10}>
+                <Ionicons name="close" size={22} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {children}
+
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// A filled chooser button. The fill is the activity colour the rest of the app
+// uses for that side - blue for fitness, amber for nutrition - so both fills are
+// light enough that the label and icon take the dark foreground.
+function ChoiceButton({ label, icon, color, onPress }: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.entryButton, styles.entryButtonRow, { backgroundColor: color }]}
+      onPress={onPress}
+    >
+      <Ionicons name={icon} size={20} color={ON_LIGHT_FILL} />
+      <Text style={[styles.entryButtonLabel, styles.textOnLightFill]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
 
 export default function DaySummary() {
   // The route param is already the YYYY-MM-DD key the database stores, so it is
@@ -38,12 +124,18 @@ export default function DaySummary() {
   const insets = useSafeAreaInsets();
   const {
     insertExercise, getExerciseDateInfo, insertMeal, getMealDateInfo,
+    getSavedExercises, getSavedMeals,
   } = useDatabase();
 
-  const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [step, setStep] = useState<Step | null>(null);
   const [activeSummary, setActiveSummary] = useState<"nutrition" | "fitness">("nutrition");
   const [workoutFormInfo, setWorkoutFormInfo] = useState(EMPTY_WORKOUT_FORM);
   const [mealFormInfo, setMealFormInfo] = useState(EMPTY_MEAL_FORM);
+
+  // Read when a picker opens rather than on mount, so an entry added on the
+  // Saved tab since this screen was pushed is in the list.
+  const [savedExercises, setSavedExercises] = useState<SavedExercise[]>([]);
+  const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
 
   // A screen doesn't remount the way the old modal did, so the rows are held in
   // state and reloaded after each insert rather than queried inline during render.
@@ -93,6 +185,78 @@ export default function DaySummary() {
     } else {
       router.replace('/(tabs)/calendar');
     }
+  }
+
+  // Steps forward. Each one seeds whatever the step it opens needs, so no step
+  // ever renders against the previous step's leftovers.
+  function openNewEntry(kind: Kind) {
+    if (kind === "workout") setWorkoutFormInfo(EMPTY_WORKOUT_FORM);
+    else setMealFormInfo(EMPTY_MEAL_FORM);
+    setStep({ name: "newEntry", kind });
+  }
+
+  function openSavedPicker(kind: Kind) {
+    if (kind === "workout") setSavedExercises(getSavedExercises());
+    else setSavedMeals(getSavedMeals());
+    setStep({ name: "savedPicker", kind });
+  }
+
+  // A saved exercise is only a name, so it still needs its metrics. The name is
+  // carried in the same form state the new-workout step uses and shown
+  // read-only, so the two steps share one set of fields.
+  function openSavedExercise(exercise: SavedExercise) {
+    setWorkoutFormInfo({ ...EMPTY_WORKOUT_FORM, name: exercise.name });
+    setStep({ name: "savedExercise", exercise });
+  }
+
+  // One step back, or out of the flow entirely from the first step.
+  function stepBack() {
+    if (!step) return;
+    switch (step.name) {
+      case "chooseKind":
+        return setStep(null);
+      case "chooseSource":
+        return setStep({ name: "chooseKind" });
+      case "newEntry":
+      case "savedPicker":
+        return setStep({ name: "chooseSource", kind: step.kind });
+      case "savedExercise":
+        return setStep({ name: "savedPicker", kind: "workout" });
+    }
+  }
+
+  function saveWorkout() {
+    const name = workoutFormInfo.name.trim();
+    if (name === '') return;
+    insertExercise(
+      date, name,
+      toInt(workoutFormInfo.sets),
+      toInt(workoutFormInfo.reps),
+      toNumber(workoutFormInfo.weight)
+    );
+    setStep(null);
+    loadDay();
+  }
+
+  function saveMeal() {
+    const name = mealFormInfo.name.trim();
+    if (name === '') return;
+    insertMeal(
+      date, name,
+      toInt(mealFormInfo.calories),
+      toNumber(mealFormInfo.protein),
+      toNumber(mealFormInfo.carbs),
+      toNumber(mealFormInfo.fat)
+    );
+    setStep(null);
+    loadDay();
+  }
+
+  // A saved meal carries its own macros, so picking one is the whole entry.
+  function logSavedMeal(meal: SavedMeal) {
+    insertMeal(date, meal.name, meal.calories, meal.protein, meal.carbs, meal.fat);
+    setStep(null);
+    loadDay();
   }
 
   const macroSummary = (
@@ -157,7 +321,7 @@ export default function DaySummary() {
 
         <Text style={styles.pageTitle}>{formatDateLong(date)}</Text>
 
-        <TouchableOpacity style={styles.headerButton} onPress={() => setActiveModal("addEntry")}>
+        <TouchableOpacity style={styles.headerButton} onPress={() => setStep({ name: "chooseKind" })}>
           <Ionicons name="add" size={26} color="#ffffff" />
         </TouchableOpacity>
       </View>
@@ -214,175 +378,232 @@ export default function DaySummary() {
         />
       )}
 
-      {/* Add Entry Modal */}
-      {activeModal === "addEntry" && (
-      <Modal visible transparent animationType="none">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
-
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setActiveModal(null)}>
-                <Text style={styles.text}>✕</Text>
-              </TouchableOpacity>
-              <Text style={[styles.text, { fontSize: 16 }]}>Add Entry</Text>
-              <View></View>{/* buffer to center Add Entry text */}
-            </View>
-
-            <TouchableOpacity style={styles.entryButton} onPress={() => {
-              setWorkoutFormInfo(EMPTY_WORKOUT_FORM);
-              setActiveModal("workout");
-            }}>
-              <Text style={[styles.text, { textAlign: "center" }]}>Add New Workout</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.entryButton} onPress={() => {
-              setMealFormInfo(EMPTY_MEAL_FORM);
-              setActiveModal("meal");
-            }}>
-              <Text style={[styles.text, { textAlign: "center" }]}>Add New Meal</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.entryButton} onPress={() => {
-              setActiveModal(null);
-            }}>
-              <Text style={[styles.text, { textAlign: "center" }]}>Add Existing Workout</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.entryButton} onPress={() => {
-              setActiveModal(null);
-            }}>
-              <Text style={[styles.text, { textAlign: "center" }]}>Add Existing Meal</Text>
-            </TouchableOpacity>
-
-          </View>
+      {/* Step 1: which side of the app the entry belongs to. */}
+      {step?.name === "chooseKind" && (
+      <ModalStep title="Add Entry" onClose={() => setStep(null)}>
+        <View style={styles.modalBody}>
+          <ChoiceButton
+            label="Add Workout"
+            icon="barbell"
+            color={kindColor("workout")}
+            onPress={() => setStep({ name: "chooseSource", kind: "workout" })}
+          />
+          <ChoiceButton
+            label="Add Meal"
+            icon="restaurant"
+            color={kindColor("meal")}
+            onPress={() => setStep({ name: "chooseSource", kind: "meal" })}
+          />
         </View>
-      </Modal>
+      </ModalStep>
       )}
 
-      {/* Add Workout Modal */}
-      {activeModal === "workout" && (
-      <Modal visible transparent animationType="none">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
+      {/* Step 2: typed fresh, or pulled from the saved library. Both buttons keep
+          the colour of the kind chosen in step 1, so the branch stays visible. */}
+      {step?.name === "chooseSource" && (
+      <ModalStep
+        title={step.kind === "workout" ? "Add Workout" : "Add Meal"}
+        onBack={stepBack}
+        onClose={() => setStep(null)}
+      >
+        <View style={styles.modalBody}>
+          <ChoiceButton
+            label={step.kind === "workout" ? "Add New Workout" : "Add New Meal"}
+            icon="create"
+            color={kindColor(step.kind)}
+            onPress={() => openNewEntry(step.kind)}
+          />
+          <ChoiceButton
+            label={step.kind === "workout" ? "Add Saved Workout" : "Add Saved Meal"}
+            icon="bookmark"
+            color={kindColor(step.kind)}
+            onPress={() => openSavedPicker(step.kind)}
+          />
+        </View>
+      </ModalStep>
+      )}
 
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setActiveModal(null)}>
-                <Text style={styles.text}>✕</Text>
-              </TouchableOpacity>
-              <Text style={[styles.text, { fontSize: 16 }]}>Add Workout</Text>
-              <View></View>{/* buffer to center Add Workout text */}
-            </View>
+      {/* Step 3: the library. Rows reuse the list styling of the day and Saved
+          screens. Tapping a meal logs it outright - it already carries its
+          macros - while an exercise goes on to its metrics. */}
+      {step?.name === "savedPicker" && (
+      <ModalStep
+        title={step.kind === "workout" ? "Choose Saved Workout" : "Choose Saved Meal"}
+        onBack={stepBack}
+        onClose={() => setStep(null)}
+      >
+        <ScrollView>
+          {step.kind === "workout" ? (
+            savedExercises.length === 0 ? (
+              <Text style={styles.emptyListText}>No saved exercises yet. Add one on the Saved tab.</Text>
+            ) : (
+              savedExercises.map((exercise) => (
+                <TouchableOpacity
+                  key={exercise.id}
+                  style={styles.listRow}
+                  onPress={() => openSavedExercise(exercise)}
+                >
+                  <Text style={styles.listRowTitle}>{exercise.name}</Text>
+                </TouchableOpacity>
+              ))
+            )
+          ) : (
+            savedMeals.length === 0 ? (
+              <Text style={styles.emptyListText}>No saved meals yet. Add one on the Saved tab.</Text>
+            ) : (
+              savedMeals.map((meal) => (
+                <TouchableOpacity
+                  key={meal.id}
+                  style={styles.listRow}
+                  onPress={() => logSavedMeal(meal)}
+                >
+                  <Text style={styles.listRowTitle}>{meal.name}</Text>
+                  <Text style={styles.listRowDetail}>
+                    {meal.calories} cal · {meal.protein}g protein · {meal.carbs}g carbs · {meal.fat}g fat
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )
+          )}
+        </ScrollView>
+      </ModalStep>
+      )}
 
-            <Text style={[styles.fieldLabel]}>Workout Name</Text>
+      {/* Workout form, shared by the new and saved paths. The fields are the
+          same either way; the two differ only in the title and in whether the
+          name is typed or fixed by the library entry - the pattern the Saved
+          tab's add/edit meal form already uses. A saved workout needs no name
+          field, so it fits a content-sized sheet rather than the tall box. */}
+      {(step?.name === "savedExercise" || (step?.name === "newEntry" && step.kind === "workout")) && (
+      <ModalStep
+        title={step.name === "savedExercise" ? "Add Saved Workout" : "Add New Workout"}
+        onBack={stepBack}
+        onClose={() => setStep(null)}
+        box={step.name === "savedExercise" ? styles.modalSheet : styles.modalBox}
+      >
+        {/* Scrolled so the fields aren't clipped by the box on a short screen,
+            and so the save button can be reached with the keyboard up.
+            persistTaps lets that button take the first tap rather than spending
+            it on dismissing the keyboard. */}
+        <ScrollView contentContainerStyle={styles.modalForm} keyboardShouldPersistTaps="handled">
+
+          <Text style={styles.fieldLabel}>Workout Name</Text>
+          {step.name === "savedExercise" ? (
+            <Text style={styles.readOnlyTextBox}>{step.exercise.name}</Text>
+          ) : (
             <TextInput
             placeholder="Workout Name"
             placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
+            style={styles.inputTextBox}
+            value={workoutFormInfo.name}
             onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, name: text})}
             />
+          )}
 
-            <Text style ={[styles.fieldLabel]}>Weight (lbs)</Text>
-            <TextInput
-            placeholder="Weight"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, weight: text})}
-            />
+          <Text style={styles.fieldLabel}>Weight (lbs)</Text>
+          <TextInput
+          placeholder="Weight"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={workoutFormInfo.weight}
+          onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, weight: text})}
+          />
 
-            <Text style ={[styles.fieldLabel]}>Sets</Text>
-            <TextInput
-            placeholder="Sets"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, sets: text})}
-            />
+          <Text style={styles.fieldLabel}>Sets</Text>
+          <TextInput
+          placeholder="Sets"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={workoutFormInfo.sets}
+          onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, sets: text})}
+          />
 
-            <Text style ={[styles.fieldLabel]}>Reps</Text>
-            <TextInput
-            placeholder="Reps"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, reps: text})}
-            />
+          <Text style={styles.fieldLabel}>Reps</Text>
+          <TextInput
+          placeholder="Reps"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={workoutFormInfo.reps}
+          onChangeText={(text) => setWorkoutFormInfo({...workoutFormInfo, reps: text})}
+          />
 
-            <TouchableOpacity style={styles.entryButton} onPress={() => {
-              insertExercise(date, workoutFormInfo.name, parseInt(workoutFormInfo.sets), parseInt(workoutFormInfo.reps), parseFloat(workoutFormInfo.weight));
-              setActiveModal(null);
-              loadDay();
-            }}>
-              <Text style={[styles.text, { textAlign: "center" }]}>Save Workout</Text>
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.entryButton} onPress={saveWorkout}>
+            <Text style={[styles.text, { textAlign: "center" }]}>Add Workout</Text>
+          </TouchableOpacity>
 
-          </View>
-        </View>
-      </Modal>
+        </ScrollView>
+      </ModalStep>
       )}
 
-      {/* Add Meal Modal */}
-      {activeModal === "meal" && (
-      <Modal visible transparent animationType="none">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
+      {/* Meal form. Field order follows the Saved tab's meal form - calories,
+          then protein, carbs, fats - so the two read the same way. */}
+      {step?.name === "newEntry" && step.kind === "meal" && (
+      <ModalStep
+        title="Add New Meal"
+        onBack={stepBack}
+        onClose={() => setStep(null)}
+        box={styles.modalBox}
+      >
+        <ScrollView contentContainerStyle={styles.modalForm} keyboardShouldPersistTaps="handled">
 
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setActiveModal(null)}>
-                <Text style={styles.text}>✕</Text>
-              </TouchableOpacity>
-              <Text style={[styles.text, { fontSize: 16 }]}>Add Meal</Text>
-              <View></View>{/* buffer to center Add Meal text */}
-            </View>
+          <Text style={styles.fieldLabel}>Meal Name</Text>
+          <TextInput
+          placeholder="Meal Name"
+          placeholderTextColor="#3a3f45"
+          style={styles.inputTextBox}
+          value={mealFormInfo.name}
+          onChangeText={(text) => setMealFormInfo({...mealFormInfo, name: text})}
+          />
 
-            <Text style={[styles.fieldLabel]}>Meal Name</Text>
-            <TextInput
-            placeholder="Meal Name"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setMealFormInfo({...mealFormInfo, name: text})}
-            />
+          <Text style={styles.fieldLabel}>Calories</Text>
+          <TextInput
+          placeholder="Calories"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={mealFormInfo.calories}
+          onChangeText={(text) => setMealFormInfo({...mealFormInfo, calories: text})}
+          />
 
-            <Text style ={[styles.fieldLabel]}>Calories</Text>
-            <TextInput
-            placeholder="Calories"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setMealFormInfo({...mealFormInfo, calories: text})}
-            />
+          <Text style={styles.fieldLabel}>Protein</Text>
+          <TextInput
+          placeholder="Protein"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={mealFormInfo.protein}
+          onChangeText={(text) => setMealFormInfo({...mealFormInfo, protein: text})}
+          />
 
-            <Text style ={[styles.fieldLabel]}>Fats</Text>
-            <TextInput
-            placeholder="Fats"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setMealFormInfo({...mealFormInfo, fat: text})}
-            />
+          <Text style={styles.fieldLabel}>Carbs</Text>
+          <TextInput
+          placeholder="Carbs"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={mealFormInfo.carbs}
+          onChangeText={(text) => setMealFormInfo({...mealFormInfo, carbs: text})}
+          />
 
-            <Text style ={[styles.fieldLabel]}>Carbs</Text>
-            <TextInput
-            placeholder="Carbs"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setMealFormInfo({...mealFormInfo, carbs: text})}
-            />
+          <Text style={styles.fieldLabel}>Fats</Text>
+          <TextInput
+          placeholder="Fats"
+          placeholderTextColor="#3a3f45"
+          keyboardType="numeric"
+          style={styles.inputTextBox}
+          value={mealFormInfo.fat}
+          onChangeText={(text) => setMealFormInfo({...mealFormInfo, fat: text})}
+          />
 
-            <Text style ={[styles.fieldLabel]}>Protein</Text>
-            <TextInput
-            placeholder="Protein"
-            placeholderTextColor="#3a3f45"
-            style={[styles.inputTextBox]}
-            onChangeText={(text) => setMealFormInfo({...mealFormInfo, protein: text})}
-            />
+          <TouchableOpacity style={styles.entryButton} onPress={saveMeal}>
+            <Text style={[styles.text, { textAlign: "center" }]}>Add Meal</Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity style={styles.entryButton} onPress={() => {
-              insertMeal(date, mealFormInfo.name, parseInt(mealFormInfo.calories), parseFloat(mealFormInfo.protein), parseFloat(mealFormInfo.carbs), parseFloat(mealFormInfo.fat));
-              setActiveModal(null);
-              loadDay();
-            }}>
-              <Text style={[styles.text, { textAlign: "center" }]}>Save Meal</Text>
-            </TouchableOpacity>
-
-          </View>
-        </View>
-      </Modal>
+        </ScrollView>
+      </ModalStep>
       )}
 
     </View>

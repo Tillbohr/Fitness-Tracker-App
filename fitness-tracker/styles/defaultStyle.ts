@@ -115,6 +115,20 @@ export const styles = StyleSheet.create({
     borderColor: "#3a3f45",
     overflow: "hidden",
   },
+  // Between modalBox and confirmBox: sizes to its content like a confirmation,
+  // but stops growing at 80% so a long saved-entry list scrolls instead of
+  // running off the screen. Used by the steps of the day screen's add flow,
+  // where a two-button chooser inside modalBox's fixed sheet is mostly dead
+  // space.
+  modalSheet: {
+    width: "80%",
+    maxHeight: "80%",
+    backgroundColor: "#25292e",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#3a3f45",
+    overflow: "hidden",
+  },
   // Unlike modalBox, which is a fixed 80% x 80% sheet, a confirmation sizes to
   // its own content - a fixed-height box around two lines of text reads as a
   // mistake.
@@ -191,6 +205,30 @@ export const styles = StyleSheet.create({
     width: "80%",
     alignSelf: "center",
     marginVertical: 8,
+  },
+  // An entryButton carrying a leading icon. The icon and label are centred as a
+  // pair rather than the icon being pinned left, so the two read as one label.
+  entryButtonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  // Sizing only - the colour comes from text or textOnLightFill depending on
+  // whether the button is filled, the same split as countBadgeText.
+  entryButtonLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  // Padding around a sheet's stack of buttons. modalBox's fixed height used to
+  // supply this by accident; a content-sized sheet has to ask for it.
+  modalBody: {
+    paddingVertical: 12,
+  },
+  // Padding around a sheet's form fields, which otherwise sit flush against the
+  // box border.
+  modalForm: {
+    padding: 16,
   },
   toggleButton: {
     padding: 12,

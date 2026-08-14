@@ -4,17 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { styles, activityColors } from "../../styles/defaultStyle";
 import { useDatabase, SavedExercise, SavedMeal } from "../../database";
+import { toInt, toNumber } from "../../utils/numbers";
 
 // What the confirmation popup is currently asking about. Held as one object
 // rather than a boolean plus an id, so the popup can never be open without
 // knowing which row it would delete.
 type PendingDelete = { kind: "meal" | "exercise"; id: number; name: string };
-
-// Text inputs hand back strings; empty/garbage input should store 0 rather than NaN.
-function toNumber(value: string) {
-  const parsed = parseFloat(value);
-  return isNaN(parsed) ? 0 : parsed;
-}
 
 export default function Saved() {
   const {
@@ -66,7 +61,7 @@ export default function Saved() {
     if (mealFormInfo.name.trim() === '') return;
     insertSavedMeal(
       mealFormInfo.name.trim(),
-      toNumber(mealFormInfo.calories),
+      toInt(mealFormInfo.calories),
       toNumber(mealFormInfo.protein),
       toNumber(mealFormInfo.carbs),
       toNumber(mealFormInfo.fat)
@@ -99,7 +94,7 @@ export default function Saved() {
     if (!editingMeal) return;
     updateSavedMeal(
       editingMeal.id,
-      toNumber(mealFormInfo.calories),
+      toInt(mealFormInfo.calories),
       toNumber(mealFormInfo.protein),
       toNumber(mealFormInfo.carbs),
       toNumber(mealFormInfo.fat)
