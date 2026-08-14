@@ -45,7 +45,6 @@ function insertExercise(date: string, name: string, sets: number, reps: number, 
     'INSERT INTO exercises (date, name, sets, reps, weight) VALUES (?, ?, ?, ?, ?)',
     [date, name, sets, reps, weight]
   );
-  console.log(getExercises(name)); // Log the exercises after insertion for debugging
 }
 
 function getExercises(name: string) {
@@ -106,6 +105,71 @@ function getSavedMeals() {
   return mealsDB.getAllSync<SavedMeal>('SELECT * FROM saved_meals ORDER BY name');
 }
 
+// Chart queries. Both roll rows up per date, so days with no entries are simply
+// absent from the result rather than coming back as 0 - the graph draws those as
+// gaps, since a rest day isn't a zero-volume workout.
+export type SeriesPoint = { date: string; value: number };
+
+export type NutritionMetric = 'Calories' | 'Protein' | 'Carbs' | 'Fat';
+
+// A column name can't be a bound parameter, so the label maps to a fixed column
+// through this table instead of being interpolated into the SQL.
+const NUTRITION_COLUMNS: Record<NutritionMetric, string> = {
+  Calories: 'calories',
+  Protein: 'protein',
+  Carbs: 'carbs',
+  Fat: 'fat',
+};
+
+export function isNutritionMetric(metric: string): metric is NutritionMetric {
+  return metric in NUTRITION_COLUMNS;
+}
+
+// Dates are stored as YYYY-MM-DD strings, so BETWEEN compares them lexicographically.
+export function toDateString(date: Date) {
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+}
+
+// Parsed field-by-field rather than with `new Date(value)`, which reads a bare
+// YYYY-MM-DD as UTC and can land on the previous day in western timezones.
+export function fromDateString(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function getLoggedExerciseNames() {
+  return exercisesDB
+    .getAllSync<{ name: string }>('SELECT DISTINCT name FROM exercises ORDER BY name')
+    .map((row) => row.name);
+}
+
+function getNutritionSeries(metric: NutritionMetric, startDate: string, endDate: string) {
+  return mealsDB.getAllSync<SeriesPoint>(
+    `SELECT date, SUM(${NUTRITION_COLUMNS[metric]}) AS value FROM meals
+     WHERE date BETWEEN ? AND ? GROUP BY date ORDER BY date`,
+    [startDate, endDate]
+  );
+}
+
+function getExerciseVolumeSeries(name: string, startDate: string, endDate: string) {
+  return exercisesDB.getAllSync<SeriesPoint>(
+    `SELECT date, SUM(sets * reps * weight) AS value FROM exercises
+     WHERE name = ? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date`,
+    [name, startDate, endDate]
+  );
+}
+
+// The rows behind one point of an exercise volume series. Queried only when a
+// point is selected, so the series query itself stays a plain GROUP BY rollup.
+export type ExerciseEntry = { sets: number; reps: number; weight: number };
+
+function getExerciseEntriesForDate(name: string, date: string) {
+  return exercisesDB.getAllSync<ExerciseEntry>(
+    'SELECT sets, reps, weight FROM exercises WHERE name = ? AND date = ? ORDER BY id',
+    [name, date]
+  );
+}
+
 function clearExerciseDatabase() {
   exercisesDB.execSync('DELETE FROM exercises');
   exercisesDB.execSync('VACUUM');
@@ -117,5 +181,5 @@ function clearMealDatabase() {
 }
 
 export function useDatabase() {
-  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals };
+  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate };
 }
