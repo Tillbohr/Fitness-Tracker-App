@@ -1,6 +1,4 @@
-import { Text, View } from 'react-native';
-import { Link } from 'expo-router';
-import { styles } from '../styles/defaultStyle';
+import { Redirect } from 'expo-router';
 import { useDatabase, toDateString } from '../database';
 
 // TESTING ONLY - remove before shipping.
@@ -77,11 +75,12 @@ export default function App() {
     console.log(`Seeded ${SEED_DAYS} days of test meals and exercises.`);
   }
 
-  return (
-    <View style={[styles.container, {alignItems: 'center', justifyContent: 'center'}]}>
-        <Link href="/calendar">
-          <Text style={styles.text}>Go to Calendar</Text>
-        </Link>
-      </View>
-  );
+  // This route draws nothing of its own - it exists to run the seed above and
+  // hand straight over to the calendar. The seed stays in the render body rather
+  // than an effect: it writes synchronously, so running it here guarantees the
+  // rows are in place before the calendar mounts and queries them.
+  //
+  // Redirect rather than a push, so the landing route is replaced instead of
+  // being left on the stack for the back button to return to.
+  return <Redirect href="/calendar" />;
 }
