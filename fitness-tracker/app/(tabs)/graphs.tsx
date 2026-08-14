@@ -49,6 +49,83 @@ type Timeframe = keyof typeof timeframes;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// Fraction of the data span left as breathing room above and below the line.
+const Y_PADDING = 0.12;
+// Above this many points the per-day dots merge into a band and the line alone
+// reads better. Hit testing is on the data, not the circles, so taps still work.
+const MAX_DOTS = 60;
+
+// The axis splits the range into tickCount - 1 even intervals, and the x range
+// is a whole number of days - so a count that doesn't divide it lands ticks
+// mid-day and prints uneven gaps (a 7 day range at 5 ticks steps 1.5 days and
+// reads Aug 8, 10, 11, 13, 14). Prefer a count that divides evenly.
+export function xTickCount(days: number) {
+  const span = days - 1;
+  for (const count of [5, 4, 6, 3]) {
+    if (span % (count - 1) === 0) return count;
+  }
+  return 5;
+}
+
+// Rounds up to 1, 2 or 5 x 10^n, so axis ticks land on numbers a person would
+// choose rather than on whatever the data extent happened to be.
+function niceStep(rough: number) {
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+  const normalized = rough / magnitude;
+  if (normalized <= 1) return magnitude;
+  if (normalized <= 2) return 2 * magnitude;
+  if (normalized <= 5) return 5 * magnitude;
+  return 10 * magnitude;
+}
+
+// Without an explicit y domain the chart fits the data exactly, which pins the
+// highest point to the top edge and the lowest to the bottom. This pads the
+// range, snaps the floor to zero when the padding reaches it, and rounds both
+// ends outward to a nice step.
+//
+// The tick count comes back with the domain because the two have to agree: the
+// axis divides the domain into tickCount - 1 even intervals, so a count that
+// doesn't match the step lands the labels on values like 1,500 inside an
+// otherwise clean 0-6,000 range.
+export function niceScale(values: number[]): { domain: [number, number]; tickCount: number } {
+  if (values.length === 0) return { domain: [0, 1], tickCount: 2 };
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  // One point, or a series that never changes, has no span to take a percentage
+  // of - build a band around the value instead of returning a zero-height
+  // domain, which would leave the line with nowhere to sit.
+  const span = max - min;
+  const padding = span === 0 ? Math.max(Math.abs(max) * Y_PADDING, 1) : span * Y_PADDING;
+
+  const paddedLow = min - padding;
+  const paddedHigh = max + padding;
+
+  // These metrics are never negative, so a floor that has been padded past zero
+  // means the data sits near zero anyway - anchor there rather than showing
+  // negative ticks that can't occur.
+  const low = paddedLow <= 0 ? 0 : paddedLow;
+  const step = niceStep((paddedHigh - low) / 4);
+
+  const domainLow = Math.floor(low / step) * step;
+  const domainHigh = Math.ceil(paddedHigh / step) * step;
+
+  return {
+    domain: [domainLow, domainHigh],
+    tickCount: Math.round((domainHigh - domainLow) / step) + 1,
+  };
+}
+
+// Short name for the y axis - what the numbers are, with their unit. The
+// caption above the chart still carries how the value is derived, which is too
+// long to sit beside an axis.
+function yAxisTitleFor(metric: string) {
+  if (metric === 'Calories') return 'Calories';
+  if (isNutritionMetric(metric)) return `${metric} (g)`;
+  return 'Total volume (lbs)';
+}
+
 // Nutrition rolls up as a per-day total of whatever the meal rows recorded; an
 // exercise rolls up as sets x reps x weight, so the caption has to say which.
 function captionFor(metric: string) {
@@ -108,10 +185,19 @@ export default function Graphs() {
     };
   }, [selectedMetric, days, getNutritionSeries, getExerciseVolumeSeries]);
 
+  const yScale = useMemo(() => niceScale(chartData.map((point) => point.value)), [chartData]);
+
+  // The tick format follows the range: a day and month read well when five ticks
+  // cover a week, but across a year only the month and year are worth the space.
+  // The middle ranges stay numeric - at 3 months five ticks are about three
+  // weeks apart, so a month-only label can print the same month twice.
   const formatDayLabel = (offset: number) => {
     const date = new Date(rangeStart);
     date.setDate(date.getDate() + Math.round(offset));
-    return `${date.getMonth() + 1}/${date.getDate()}`;
+
+    if (days <= 30) return `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
+    if (days <= 180) return `${date.getMonth() + 1}/${date.getDate()}`;
+    return `${MONTH_NAMES[date.getMonth()]} '${date.getFullYear().toString().slice(-2)}`;
   };
 
   // The press state does the nearest-point hit testing and reports the matched
@@ -252,7 +338,15 @@ export default function Graphs() {
 
       <Text style={graphStyle.caption}>{captionFor(selectedMetric)}</Text>
 
-      {/* Chart */}
+      {/* Chart, with the y axis titled down the left of the plot. The title is a
+          plain RN Text rather than Skia text, which would need a bundled font
+          this project doesn't carry - the same reason the tooltip is a View. */}
+      <View style={graphStyle.chartRow}>
+
+      <View style={graphStyle.yTitleWrap}>
+        <Text style={graphStyle.axisTitle}>{yAxisTitleFor(selectedMetric)}</Text>
+      </View>
+
       <View
         style={graphStyle.graph}
         onLayout={(e) => setChartSize({
@@ -269,21 +363,28 @@ export default function Graphs() {
             data={chartData}
             xKey="day"
             yKeys={["value"]}
-            domain={{ x: [0, days - 1] }}
+            domain={{ x: [0, days - 1], y: yScale.domain }}
             chartPressState={pressState}
             actionsRef={actionsRef}
             customGestures={tapGesture}
             axisOptions={{
               lineColor: "#3a3f45",
               labelColor: "#ffffff",
-              lineWidth: 2,
+              // A hairline, so the grid stays recessive against the 2px data line.
+              lineWidth: 1,
+              // Both counts are chosen to match their range: x so ticks land on
+              // whole days, y so they land on the domain's step.
+              tickCount: { x: xTickCount(days), y: yScale.tickCount },
               formatXLabel: formatDayLabel,
+              formatYLabel: formatNumber,
             }}
           >
             {({ points }) => (
               <>
                 <Line points={points.value} color="#42a6ce" strokeWidth={2} />
-                {points.value.map((point, index) =>
+                {/* Dropped on long timeframes, where a dot per day merges into a
+                    band; the selected point still gets its marker below. */}
+                {points.value.length <= MAX_DOTS && points.value.map((point, index) =>
                   point.y != null && (
                     <Circle
                       key={index}
@@ -293,6 +394,16 @@ export default function Graphs() {
                       color="#42a6ce"
                     />
                   )
+                )}
+                {/* On a dense chart the pinned point needs its own dot, since the
+                    per-point circles above aren't drawn. */}
+                {points.value.length > MAX_DOTS && selection && points.value[selection.index]?.y != null && (
+                  <Circle
+                    cx={points.value[selection.index].x}
+                    cy={points.value[selection.index].y!}
+                    r={6}
+                    color="#42a6ce"
+                  />
                 )}
                 {/* Ring marking the pinned point */}
                 {selection && points.value[selection.index]?.y != null && (
@@ -343,6 +454,10 @@ export default function Graphs() {
         )}
       </View>
 
+      </View>
+
+      <Text style={[graphStyle.axisTitle, graphStyle.xAxisTitle]}>Date</Text>
+
     </View>
   );
 }
@@ -392,9 +507,28 @@ const graphStyle = StyleSheet.create({
     paddingHorizontal: 12,
     paddingBottom: 8,
   },
+  chartRow: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  // Narrow enough to leave the plot most of a phone's width; the title wraps
+  // onto as many lines as it needs.
+  yTitleWrap: {
+    width: 54,
+    justifyContent: 'center',
+    paddingLeft: 4,
+  },
+  axisTitle: {
+    color: '#8a9199',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  xAxisTitle: {
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
   graph: {
     flex: 1,
-    width: '100%',
     justifyContent: 'center',
   },
   tooltip: {
