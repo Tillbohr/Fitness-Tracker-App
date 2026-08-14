@@ -3,9 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect } from "expo-router";
 import { useAnimatedReaction, runOnJS, useSharedValue } from "react-native-reanimated";
 import { Gesture } from "react-native-gesture-handler";
-import { styles } from "../../styles/defaultStyle";
-import { CartesianChart, Line, useChartPressState, type CartesianActionsHandle } from "victory-native";
-import { Circle } from "@shopify/react-native-skia";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { styles, activityColors } from "../../styles/defaultStyle";
+import { CartesianChart, Line, Area, useChartPressState, type CartesianActionsHandle } from "victory-native";
+import { Circle, LinearGradient, vec } from "@shopify/react-native-skia";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDatabase, isNutritionMetric, toDateString, fromDateString } from "../../database";
 
@@ -47,6 +48,31 @@ const timeframes = {
 
 type Timeframe = keyof typeof timeframes;
 
+// Abbreviations for the segmented row, where five options share one line. The
+// full names stay the keys, since the empty-state message reads them out.
+const timeframeLabels: Record<Timeframe, string> = {
+  '7 Days': '7d',
+  '30 Days': '30d',
+  '3 Months': '3m',
+  '6 Months': '6m',
+  '1 Year': '1y',
+};
+
+// A chart here draws one metric at a time, so the line colour is that metric's
+// identity rather than a slot in a categorical palette: nutrition takes the
+// app's amber, an exercise the accent blue - the pairing the calendar badges and
+// the day toggles already use. Both clear 3:1 against the #25292e surface.
+function seriesColorFor(metric: string) {
+  return isNutritionMetric(metric) ? activityColors.nutrition : activityColors.fitness;
+}
+
+// Skia's colour parser is happiest with rgba(), so the shared hex tokens are
+// converted rather than being written out a second time as literals.
+function withAlpha(hex: string, alpha: number) {
+  const value = parseInt(hex.slice(1), 16);
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Fraction of the data span left as breathing room above and below the line.
@@ -54,6 +80,18 @@ const Y_PADDING = 0.12;
 // Above this many points the per-day dots merge into a band and the line alone
 // reads better. Hit testing is on the data, not the circles, so taps still work.
 const MAX_DOTS = 60;
+
+// The fill under the line is a wash rather than a block - the series hue at 16%
+// against the plot's top edge, fading to nothing at the baseline.
+const AREA_TOP_ALPHA = 0.16;
+
+// Dots are drawn on a ring of the surface colour, so a point reads as a point
+// instead of dissolving into the line beneath it, which is the same hue. A
+// stroke around the mark would add ink that isn't data; the gap does the work.
+const SURFACE = "#25292e";
+const DOT_RING = 2;
+const DOT_RADIUS = 4;
+const DOT_RADIUS_SELECTED = 6;
 
 // The axis splits the range into tickCount - 1 even intervals, and the x range
 // is a whole number of days - so a count that doesn't divide it lands ticks
@@ -117,17 +155,10 @@ export function niceScale(values: number[]): { domain: [number, number]; tickCou
   };
 }
 
-// Short name for the y axis - what the numbers are, with their unit. The
-// caption above the chart still carries how the value is derived, which is too
-// long to sit beside an axis.
-function yAxisTitleFor(metric: string) {
-  if (metric === 'Calories') return 'Calories';
-  if (isNutritionMetric(metric)) return `${metric} (g)`;
-  return 'Total volume (lbs)';
-}
-
 // Nutrition rolls up as a per-day total of whatever the meal rows recorded; an
 // exercise rolls up as sets x reps x weight, so the caption has to say which.
+// This doubles as the y axis title: it already names the quantity and its unit,
+// so a separate axis label down the left would only repeat it for 54px of width.
 function captionFor(metric: string) {
   if (metric === 'Calories') return 'Daily total calories';
   if (isNutritionMetric(metric)) return `Daily total ${metric.toLowerCase()} (g)`;
@@ -141,10 +172,13 @@ export default function Graphs() {
   } = useDatabase();
 
   const [metricOpen, setMetricOpen] = useState(false);
-  const [timeframeOpen, setTimeframeOpen] = useState(false);
   const [selectedMetric, setSelectedMetric] = useState('Calories');
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('30 Days');
   const [exerciseNames, setExerciseNames] = useState<string[]>([]);
+
+  // Drives the line, the area wash, the active timeframe segment and the
+  // tooltip's edge, so the whole screen shifts with the metric.
+  const seriesColor = seriesColorFor(selectedMetric);
 
   // Tab screens stay mounted, so a workout logged over on the calendar tab would
   // never reach a mount-only effect - reload the list every time this tab focuses.
@@ -282,16 +316,23 @@ export default function Graphs() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
 
-      {/* Dropdown row */}
-      <View style={graphStyle.dropdownRow}>
+      {/* One control row scoping the whole screen: the metric, then the range.
+          The metric list is open-ended so it stays a dropdown, but five fixed
+          timeframes fit on one line as segments and save a tap each. */}
+      <View style={graphStyle.controls}>
 
-        {/* Metric dropdown */}
+        <Text style={styles.fieldLabel}>Metric</Text>
         <View style={graphStyle.dropdownWrapper}>
           <TouchableOpacity
             style={graphStyle.dropdownButton}
-            onPress={() => { setMetricOpen(!metricOpen); setTimeframeOpen(false); }}
+            onPress={() => setMetricOpen(!metricOpen)}
           >
-            <Text style={styles.text}>{selectedMetric} ▾</Text>
+            <Text style={styles.text}>{selectedMetric}</Text>
+            <Ionicons
+              name={metricOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color="#8a9199"
+            />
           </TouchableOpacity>
           {metricOpen && (
             <View style={graphStyle.dropdownList}>
@@ -311,42 +352,34 @@ export default function Graphs() {
           )}
         </View>
 
-        {/* Timeframe dropdown */}
-        <View style={graphStyle.dropdownWrapper}>
-          <TouchableOpacity
-            style={graphStyle.dropdownButton}
-            onPress={() => { setTimeframeOpen(!timeframeOpen); setMetricOpen(false); }}
-          >
-            <Text style={styles.text}>{selectedTimeframe} ▾</Text>
-          </TouchableOpacity>
-          {timeframeOpen && (
-            <View style={graphStyle.dropdownList}>
-              {(Object.keys(timeframes) as Timeframe[]).map(t => (
-                <TouchableOpacity
-                  key={t}
-                  style={graphStyle.dropdownItem}
-                  onPress={() => { setSelectedTimeframe(t); setTimeframeOpen(false); }}
-                >
-                  <Text style={styles.text}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
+        {/* The active segment takes the metric's own colour, so the controls and
+            the line agree on which side of the app is being looked at. */}
+        <View style={graphStyle.segmentRow}>
+          {(Object.keys(timeframes) as Timeframe[]).map(t => (
+            <TouchableOpacity
+              key={t}
+              style={[
+                graphStyle.segment,
+                selectedTimeframe === t && { backgroundColor: seriesColor, borderColor: seriesColor },
+              ]}
+              onPress={() => setSelectedTimeframe(t)}
+            >
+              <Text style={[
+                graphStyle.segmentText,
+                selectedTimeframe === t && styles.textOnLightFill,
+              ]}>
+                {timeframeLabels[t]}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
       </View>
 
       <Text style={graphStyle.caption}>{captionFor(selectedMetric)}</Text>
 
-      {/* Chart, with the y axis titled down the left of the plot. The title is a
-          plain RN Text rather than Skia text, which would need a bundled font
-          this project doesn't carry - the same reason the tooltip is a View. */}
-      <View style={graphStyle.chartRow}>
-
-      <View style={graphStyle.yTitleWrap}>
-        <Text style={graphStyle.axisTitle}>{yAxisTitleFor(selectedMetric)}</Text>
-      </View>
-
+      {/* The plot takes the full width: the caption above already names the
+          quantity and its unit, so neither axis carries a title of its own. */}
       <View
         style={graphStyle.graph}
         onLayout={(e) => setChartSize({
@@ -369,7 +402,9 @@ export default function Graphs() {
             customGestures={tapGesture}
             axisOptions={{
               lineColor: "#3a3f45",
-              labelColor: "#ffffff",
+              // The muted text token, not white: tick labels annotate the data,
+              // so they must not carry the same weight as the line they label.
+              labelColor: "#8a9199",
               // A hairline, so the grid stays recessive against the 2px data line.
               lineWidth: 1,
               // Both counts are chosen to match their range: x so ticks land on
@@ -379,33 +414,73 @@ export default function Graphs() {
               formatYLabel: formatNumber,
             }}
           >
-            {({ points }) => (
+            {({ points, chartBounds }) => (
               <>
-                <Line points={points.value} color="#42a6ce" strokeWidth={2} />
+                {/* A wash under the line rather than a filled block: the hue at
+                    16% against the top of the plot, gone by the baseline. */}
+                <Area points={points.value} y0={chartBounds.bottom}>
+                  <LinearGradient
+                    start={vec(0, chartBounds.top)}
+                    end={vec(0, chartBounds.bottom)}
+                    colors={[withAlpha(seriesColor, AREA_TOP_ALPHA), withAlpha(seriesColor, 0)]}
+                  />
+                </Area>
+
+                <Line
+                  points={points.value}
+                  color={seriesColor}
+                  strokeWidth={2}
+                  strokeCap="round"
+                  strokeJoin="round"
+                />
+
                 {/* Dropped on long timeframes, where a dot per day merges into a
-                    band; the selected point still gets its marker below. */}
-                {points.value.length <= MAX_DOTS && points.value.map((point, index) =>
-                  point.y != null && (
+                    band; the selected point still gets its marker below. Each dot
+                    is drawn over a surface-coloured disc, so it separates from
+                    the same-coloured line without a stroke around the mark. The
+                    ring and fill interleave per point rather than running as two
+                    passes, so overlapping dots stack like coins. */}
+                {points.value.length <= MAX_DOTS && points.value.flatMap((point, index) =>
+                  point.y == null ? [] : [
                     <Circle
-                      key={index}
+                      key={`ring-${index}`}
                       cx={point.x}
                       cy={point.y}
-                      r={selection?.index === index ? 6 : 4}
-                      color="#42a6ce"
-                    />
-                  )
+                      r={(selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS) + DOT_RING}
+                      color={SURFACE}
+                    />,
+                    <Circle
+                      key={`dot-${index}`}
+                      cx={point.x}
+                      cy={point.y}
+                      r={selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS}
+                      color={seriesColor}
+                    />,
+                  ]
                 )}
+
                 {/* On a dense chart the pinned point needs its own dot, since the
                     per-point circles above aren't drawn. */}
                 {points.value.length > MAX_DOTS && selection && points.value[selection.index]?.y != null && (
-                  <Circle
-                    cx={points.value[selection.index].x}
-                    cy={points.value[selection.index].y!}
-                    r={6}
-                    color="#42a6ce"
-                  />
+                  <>
+                    <Circle
+                      cx={points.value[selection.index].x}
+                      cy={points.value[selection.index].y!}
+                      r={DOT_RADIUS_SELECTED + DOT_RING}
+                      color={SURFACE}
+                    />
+                    <Circle
+                      cx={points.value[selection.index].x}
+                      cy={points.value[selection.index].y!}
+                      r={DOT_RADIUS_SELECTED}
+                      color={seriesColor}
+                    />
+                  </>
                 )}
-                {/* Ring marking the pinned point */}
+
+                {/* Ring marking the pinned point. White rather than the series
+                    colour, so the selection affordance stays distinct from the
+                    surface ring every dot already carries. */}
                 {selection && points.value[selection.index]?.y != null && (
                   <Circle
                     cx={points.value[selection.index].x}
@@ -423,7 +498,7 @@ export default function Graphs() {
 
         {/* Detail window for the pinned point */}
         {selectedPoint && (
-          <View style={[graphStyle.tooltip, tooltipPosition]}>
+          <View style={[graphStyle.tooltip, tooltipPosition, { borderColor: seriesColor }]}>
             <View style={graphStyle.tooltipHeader}>
               <Text style={graphStyle.tooltipLabel}>Date</Text>
               <TouchableOpacity onPress={clearSelection} hitSlop={8}>
@@ -454,32 +529,30 @@ export default function Graphs() {
         )}
       </View>
 
-      </View>
-
-      <Text style={[graphStyle.axisTitle, graphStyle.xAxisTitle]}>Date</Text>
-
     </View>
   );
 }
 
 const graphStyle = StyleSheet.create({
-  dropdownRow: {
-    flexDirection: 'row',
-    gap: 8,
+  controls: {
     padding: 12,
     zIndex: 10,
   },
+  // The open list is absolutely positioned out of this wrapper and has to paint
+  // over the segment row below it, so the wrapper outranks that row explicitly
+  // rather than relying on sibling order.
   dropdownWrapper: {
-    flex: 1,
     position: 'relative',
-    zIndex: 10,
+    zIndex: 20,
   },
   dropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: '#3a3f45',
     borderRadius: 8,
     padding: 10,
-    alignItems: 'center',
   },
   dropdownList: {
     position: 'absolute',
@@ -501,42 +574,49 @@ const graphStyle = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: '#3a3f45',
   },
+  // Five segments on one line, so the labels are abbreviated and the row splits
+  // the width evenly rather than sizing to its text.
+  segmentRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 10,
+    zIndex: 1,
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3a3f45',
+    alignItems: 'center',
+  },
+  segmentText: {
+    color: '#ffffff',
+    fontSize: 13,
+  },
+  // Doubles as the y axis title, so it names the quantity and its unit.
   caption: {
     color: '#8a9199',
     fontSize: 12,
     paddingHorizontal: 12,
     paddingBottom: 8,
   },
-  chartRow: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  // Narrow enough to leave the plot most of a phone's width; the title wraps
-  // onto as many lines as it needs.
-  yTitleWrap: {
-    width: 54,
-    justifyContent: 'center',
-    paddingLeft: 4,
-  },
-  axisTitle: {
-    color: '#8a9199',
-    fontSize: 11,
-    textAlign: 'center',
-  },
-  xAxisTitle: {
-    paddingTop: 2,
-    paddingBottom: 6,
-  },
+  // Padding keeps the leftmost y tick and the outer x ticks off the screen
+  // edges now that nothing sits beside the plot.
   graph: {
     flex: 1,
     justifyContent: 'center',
+    paddingLeft: 12,
+    paddingRight: 16,
+    paddingBottom: 8,
   },
+  // The edge is tinted with the metric's colour at render time; the text inside
+  // stays on the plain text tokens.
   tooltip: {
     position: 'absolute',
     width: TOOLTIP_WIDTH,
     backgroundColor: '#2f353b',
     borderWidth: 1,
-    borderColor: '#42a6ce',
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingTop: 6,
