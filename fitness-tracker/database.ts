@@ -105,6 +105,26 @@ function getSavedMeals() {
   return mealsDB.getAllSync<SavedMeal>('SELECT * FROM saved_meals ORDER BY name');
 }
 
+// The name is deliberately not updatable: it's the UNIQUE column, so a rename
+// could collide with another row and throw. Editing covers the macros only.
+function updateSavedMeal(id: number, calories: number, protein: number, carbs: number, fat: number) {
+  mealsDB.runSync(
+    'UPDATE saved_meals SET calories = ?, protein = ?, carbs = ?, fat = ? WHERE id = ?',
+    [calories, protein, carbs, fat, id]
+  );
+}
+
+// Removes a library entry only. The dated rows in `meals` / `exercises` are a
+// separate table (and a separate database file for exercises), so days that
+// already logged this entry keep their data.
+function deleteSavedMeal(id: number) {
+  mealsDB.runSync('DELETE FROM saved_meals WHERE id = ?', [id]);
+}
+
+function deleteSavedExercise(id: number) {
+  exercisesDB.runSync('DELETE FROM saved_exercises WHERE id = ?', [id]);
+}
+
 // Chart queries. Both roll rows up per date, so days with no entries are simply
 // absent from the result rather than coming back as 0 - the graph draws those as
 // gaps, since a rest day isn't a zero-volume workout.
@@ -204,5 +224,5 @@ function clearMealDatabase() {
 }
 
 export function useDatabase() {
-  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate, getMealCountsInRange, getExerciseCountsInRange };
+  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, updateSavedMeal, deleteSavedMeal, deleteSavedExercise, getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate, getMealCountsInRange, getExerciseCountsInRange };
 }

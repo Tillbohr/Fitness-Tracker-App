@@ -29,6 +29,12 @@ There is no test suite configured in this project.
 
 Dates are stored/queried as `YYYY-MM-DD` strings. Build them with `toDateString(date)` from `database.ts` rather than re-typing the `padStart` construction, parse them back with `fromDateString` (a bare `new Date('2026-08-12')` reads as UTC and lands on the previous day in western timezones), and format them for display with `formatDateLong` from `utils/dates.ts`.
 
+**Saved screen** (`app/(tabs)/saved.tsx`): the reusable meal/exercise libraries. Each row carries a trash button, and meal rows also a pencil, both muted Ionicons pinned right by `listRowActions`/`listRowBody`. Delete always routes through a confirmation (`pendingDelete` holds the kind, id and name together, so the popup can't be open without knowing its target) — `confirmBox` sizes to its content rather than reusing `modalBox`'s fixed 80%×80% sheet.
+
+Editing covers the macros only: `name` is the `UNIQUE` column in both `saved_meals` and `saved_exercises`, and an `UPDATE` onto an existing name throws (inserts get away with it via `INSERT OR IGNORE`). So `updateSavedMeal` takes no name, the edit modal shows the name read-only, and renaming means delete and re-add. That's also why exercise rows have no pencil — an exercise is only a name.
+
+`deleteSavedMeal`/`deleteSavedExercise` remove library entries alone; the dated `meals`/`exercises` rows are separate tables, so logged days keep their data.
+
 **Calendar screen** (`app/(tabs)/calendar.tsx`): renders a month grid and nothing else. Tapping a day pushes `/day/[date]` with the `YYYY-MM-DD` key as the param; the screen holds no per-day state or modals of its own.
 
 `useCalendarLogic()` (`app/hooks/calendar_logic.ts`) returns `weeks`, a 6×7 array of `{ day, inMonth }`. Every month is padded to all six rows — including the 4- and 5-week ones — so row height doesn't change as you page between months. The padding cells aren't blank: they carry the previous month's tail and the next month's head, which `initDaysArray` gets for free by building each cell as `new Date(year, month, offset)` and letting out-of-range day numbers roll over. `inMonth: false` cells render dimmed (`cellTextAdjacent`) and are deliberately inert — no `TouchableOpacity`, no dots, and no today outline.

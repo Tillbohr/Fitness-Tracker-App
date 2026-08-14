@@ -115,6 +115,54 @@ export const styles = StyleSheet.create({
     borderColor: "#3a3f45",
     overflow: "hidden",
   },
+  // Unlike modalBox, which is a fixed 80% x 80% sheet, a confirmation sizes to
+  // its own content - a fixed-height box around two lines of text reads as a
+  // mistake.
+  confirmBox: {
+    width: "80%",
+    backgroundColor: "#25292e",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#3a3f45",
+    padding: 20,
+  },
+  confirmText: {
+    color: "#ffffff",
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  confirmSubject: {
+    color: "#8a9199",
+    fontSize: 13,
+    textAlign: "center",
+    marginBottom: 18,
+  },
+  confirmButtonRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  confirmButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#3a3f45",
+    alignItems: "center",
+  },
+  // Read-only field in the edit form: same box as inputTextBox, but muted so it
+  // doesn't look like something you can type into.
+  readOnlyTextBox: {
+    borderWidth: 1,
+    borderColor: "#3a3f45",
+    borderRadius: 8,
+    marginBottom: 16,
+    fontSize: 14,
+    color: "#8a9199",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#2f353b",
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.65)",
@@ -260,6 +308,21 @@ export const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 0.5,
     borderBottomColor: "#3a3f45",
+  },
+  // A listRow that carries edit/delete buttons: the text block takes the space
+  // left over so the icons stay pinned to the right edge.
+  listRowActions: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  listRowBody: {
+    flex: 1,
+  },
+  // Padding plus hitSlop on the touchable brings a 20px icon up to a comfortable
+  // tap target without making the row taller.
+  rowAction: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   listRowTitle: {
     color: "#ffffff",
