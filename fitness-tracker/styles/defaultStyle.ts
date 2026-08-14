@@ -90,6 +90,100 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     marginHorizontal: 4,
   },
+  // Header for a full screen (day summary), as opposed to modalHeader which sits
+  // inside a modalBox. Same three-slot back / title / action layout.
+  pageHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#3a3f45",
+  },
+  pageTitle: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  // Fixed width so the title stays centred between the two icon buttons even
+  // though only one of them renders an icon of a given size.
+  headerButton: {
+    width: 32,
+    alignItems: "center",
+  },
+  toggleRow: {
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  // Macro figures on the left, pie on the right.
+  macroRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  macroList: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  heroNumber: {
+    color: "#ffffff",
+    fontSize: 32,
+    fontWeight: "700",
+  },
+  heroLabel: {
+    color: "#8a9199",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  macroItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  // Doubles as the pie's legend swatch - identity is never carried by the slice
+  // colour alone, since the name and gram value sit right beside it.
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  macroName: {
+    color: "#ffffff",
+    fontSize: 14,
+    flex: 1,
+  },
+  macroValue: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  macroPercent: {
+    color: "#8a9199",
+    fontSize: 12,
+    width: 44,
+    textAlign: "right",
+  },
+  pieWrap: {
+    width: 150,
+    height: 150,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionLabel: {
+    color: "#8a9199",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
   toggleHeader: {
     flexDirection: "row",
     alignItems: "center",
