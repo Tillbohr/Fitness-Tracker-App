@@ -317,7 +317,11 @@ export default function Saved() {
                 <Text style={styles.text}>Cancel</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.confirmButton} onPress={confirmDelete}>
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.confirmButtonDanger]}
+                onPress={confirmDelete}
+              >
+                <Ionicons name="trash-outline" size={18} color="#ffffff" />
                 <Text style={styles.text}>Delete</Text>
               </TouchableOpacity>
             </View>

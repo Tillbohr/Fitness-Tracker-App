@@ -164,6 +164,18 @@ export const styles = StyleSheet.create({
     borderColor: "#3a3f45",
     alignItems: "center",
   },
+  // The destructive half of a confirmation, filled so it doesn't read as an
+  // equal choice beside Cancel. The shade is picked to clear both checks against
+  // the #25292e surface at once: white 14px label at 4.54:1, and the button's
+  // own edge at 3.22:1. A more saturated red drops the label under 4.5:1, a
+  // deeper one drops the edge under 3:1. Row layout is for the leading icon.
+  confirmButtonDanger: {
+    backgroundColor: "#d1453b",
+    borderColor: "#d1453b",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+  },
   // Read-only field in the edit form: same box as inputTextBox, but muted so it
   // doesn't look like something you can type into.
   readOnlyTextBox: {
