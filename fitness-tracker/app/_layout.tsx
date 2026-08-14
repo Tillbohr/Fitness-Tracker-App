@@ -9,6 +9,9 @@ export default function RootLayout() {
             <Stack>
                 <Stack.Screen name = "index" options={{headerShown: false}} />
                 <Stack.Screen name = "(tabs)" options={{headerShown: false}} />
+                {/* Pushed over the tab bar from the calendar grid. Draws its own
+                    header (back / date / add), so the stack header stays off. */}
+                <Stack.Screen name = "day/[date]" options={{headerShown: false}} />
             </Stack>
         </GestureHandlerRootView>
     )
