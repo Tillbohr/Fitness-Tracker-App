@@ -1,7 +1,7 @@
 import { Text, View, FlatList, TouchableOpacity, Modal, TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useEffect, useState } from "react";
-import { styles } from "../../styles/defaultStyle";
+import { styles, activityColors } from "../../styles/defaultStyle";
 import { useDatabase, SavedExercise, SavedMeal } from "../../database";
 
 // Text inputs hand back strings; empty/garbage input should store 0 rather than NaN.
@@ -75,14 +75,14 @@ export default function Saved() {
       {/* Meals / Exercises toggle with the add button on the right */}
       <View style={styles.toggleHeader}>
         <TouchableOpacity
-          style={[styles.toggleButton, { backgroundColor: activeLibrary === "meals" ? "#42a6ce" : "transparent" }]}
+          style={[styles.toggleButton, activeLibrary === "meals" && { backgroundColor: activityColors.nutrition }]}
           onPress={() => setActiveLibrary("meals")}
         >
-          <Text style={styles.text}>Meals</Text>
+          <Text style={[styles.text, activeLibrary === "meals" && styles.textOnLightFill]}>Meals</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.toggleButton, { backgroundColor: activeLibrary === "exercises" ? "#42a6ce" : "transparent" }]}
+          style={[styles.toggleButton, activeLibrary === "exercises" && { backgroundColor: activityColors.fitness }]}
           onPress={() => setActiveLibrary("exercises")}
         >
           <Text style={styles.text}>Exercises</Text>

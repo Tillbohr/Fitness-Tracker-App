@@ -29,7 +29,11 @@ There is no test suite configured in this project.
 
 Dates are stored/queried as `YYYY-MM-DD` strings. Build them with `toDateString(date)` from `database.ts` rather than re-typing the `padStart` construction, parse them back with `fromDateString` (a bare `new Date('2026-08-12')` reads as UTC and lands on the previous day in western timezones), and format them for display with `formatDateLong` from `utils/dates.ts`.
 
-**Calendar screen** (`app/(tabs)/calendar.tsx`): renders a month grid (via `useCalendarLogic()` from `app/hooks/calendar_logic.ts`, which computes `daysArray` including leading/trailing blanks for a 7-column grid) and nothing else. Tapping a day pushes `/day/[date]` with the `YYYY-MM-DD` key as the param; the screen holds no per-day state or modals of its own.
+**Calendar screen** (`app/(tabs)/calendar.tsx`): renders a month grid and nothing else. Tapping a day pushes `/day/[date]` with the `YYYY-MM-DD` key as the param; the screen holds no per-day state or modals of its own.
+
+`useCalendarLogic()` (`app/hooks/calendar_logic.ts`) returns `weeks`, a 6×7 array of `{ day, inMonth }`. Every month is padded to all six rows — including the 4- and 5-week ones — so row height doesn't change as you page between months. The padding cells aren't blank: they carry the previous month's tail and the next month's head, which `initDaysArray` gets for free by building each cell as `new Date(year, month, offset)` and letting out-of-range day numbers roll over. `inMonth: false` cells render dimmed (`cellTextAdjacent`) and are deliberately inert — no `TouchableOpacity`, no dots, and no today outline.
+
+Each in-month cell stacks a count badge per kind of entry logged that day — amber meals on top, accent-blue exercises below, with the count inside. The counts come from `getMealCountsInRange` / `getExerciseCountsInRange` — two queries, not one, because meals and exercises are separate database files — and are held as `Map<string, number>` so a cell is a lookup rather than a scan. Both `GROUP BY date`, so a day with nothing logged is absent from the map and renders no badge rather than a zero. They reload in a `useFocusEffect` keyed on `[month, year]`, which covers both returning from the day summary after logging and paging to another month; a mount-only effect would go stale, since tab screens stay mounted. The grid is sized by flex, not by measurement: `styles.grid` is `flex: 1` and each `styles.week` row is `flex: 1`, so the six rows divide whatever is left below the two headers and the last row ends flush against the tab bar on any device. An earlier version measured the headers via `onLayout` and divided by a hard-coded 6, which left a blank row on any month shorter than six weeks; don't reintroduce a measured `cellHeight`.
 
 **Day summary screen** (`app/day/[date].tsx`): owns everything for a single date. Its header is back / date / add, and the add button drives an `activeModal` state machine (`"addEntry" | "workout" | "meal" | null`) rather than separate boolean flags per modal; "addEntry" branches into the "workout" or "meal" entry forms, each with local form state (`workoutFormInfo`, `mealFormInfo`) saved via the `useDatabase()` insert functions. An `activeSummary` toggle switches between the nutrition and fitness views.
 
@@ -48,7 +52,11 @@ The tooltip is a plain RN `View` overlay, not Skia text: Skia's `Text` needs `us
 
 **`app/_layout.tsx`** wraps the `Stack` in `GestureHandlerRootView`. It's load-bearing — without it react-native-gesture-handler receives no touches on Android and the graphs chart's selection silently does nothing.
 
-**Styling**: no per-component stylesheets beyond one-offs. `styles/defaultStyle.ts` exports a shared `StyleSheet` (dark theme, `#25292e` background, `#42a6ce` accent) used across screens; `graphs.tsx` additionally defines a local `graphStyle` for its dropdown UI. When adding UI, prefer extending `defaultStyle.ts` over inlining styles, to stay consistent with the rest of the app.
+**Styling**: no per-component stylesheets beyond one-offs. `styles/defaultStyle.ts` exports a shared `StyleSheet` (dark theme, `#25292e` background, `#42a6ce` accent) used across screens.
+
+It also exports `activityColors` — `nutrition: "#d9a441"` (amber), `fitness: "#42a6ce"` (the accent) — the app's one definition of which colour stands for which side. It drives the day summary's nutrition/fitness toggles, the Saved tab's meals/exercises toggles, and the calendar's count badges, so those three agree. Both fills are light, so text on them uses `styles.textOnLightFill` (`#25292e`) rather than white; white on amber is only ~1.9:1. Use `activityColors` for any new nutrition-vs-fitness distinction instead of a fresh hex.
+
+`graphs.tsx` additionally defines a local `graphStyle` for its dropdown UI. When adding UI, prefer extending `defaultStyle.ts` over inlining styles, to stay consistent with the rest of the app.
 
 **Path alias**: `@/*` maps to the `fitness-tracker/` root (see `tsconfig.json`), though existing code mostly uses relative imports (e.g. `../../styles/defaultStyle`).
 

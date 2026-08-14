@@ -1,5 +1,14 @@
 import { StyleSheet } from "react-native";
 
+// The two sides of the app, colour-coded consistently wherever they're shown
+// side by side: the day summary's nutrition/fitness toggles and the calendar's
+// meal/exercise count badges. Both fills are light enough that text sitting on
+// them uses textOnLightFill rather than white.
+export const activityColors = {
+  nutrition: "#d9a441",
+  fitness: "#42a6ce",
+};
+
 export const styles = StyleSheet.create({
     container: {
     flex: 1,
@@ -18,30 +27,84 @@ export const styles = StyleSheet.create({
   text: {
     color: "#ffffff",
   },
+  // For text sitting on one of the activityColors fills - roughly twice the
+  // contrast white manages against amber.
+  textOnLightFill: {
+    color: "#25292e",
+  },
+  // Six week rows share the height left over below the two headers, so the grid
+  // ends flush against the tab bar without measuring anything.
   grid :{
     flex: 1,
     flexDirection: "column",
+  },
+  week: {
+    flex: 1,
+    flexDirection: "row",
   },
   daysHeader :{
     flexDirection: "row",
     borderBottomWidth: 0.5,
     borderColor: "#3a3f45",
   },
+  // Same muted uppercase treatment as sectionLabel. Height comes from the
+  // padding so the label can't be clipped at a larger font scale.
   headerCell :{
     flex: 1,
-    alignItems: "center",
     textAlign: "center",
-    color: "#ffffff",
-    height: 25,
+    color: "#8a9199",
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    paddingVertical: 8,
   },
+  // Top-aligned rather than centred, so the day number keeps a fixed position
+  // and the activity dots have room beneath it.
   cell :{
     flex: 1,
     alignItems: "center",
-    textAlign: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
+    paddingTop: 6,
     borderWidth: 0.5,
     borderColor: "#3a3f45",
+  },
+  cellText: {
     color: "#ffffff",
+    fontSize: 14,
+  },
+  // Days spilling in from the previous or next month, dimmed well below the
+  // muted grey used for secondary text so they read as context, not content.
+  cellTextAdjacent: {
+    color: "#6b7280",
+  },
+  // One badge per kind of entry logged that day, stacked under the day number
+  // with meals on top.
+  badgeStack: {
+    alignItems: "center",
+    marginTop: 3,
+  },
+  // minWidth rather than a fixed width so a two-digit count widens the circle
+  // into a pill instead of overflowing it.
+  countBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  // Pairs with textOnLightFill for the colour; only the sizing lives here.
+  countBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  // Today keeps the plain cell layout and only swaps its border to the accent.
+  // Slightly thicker than the 0.5 grid hairline so the outline reads as
+  // deliberate rather than as an artifact of the neighbouring borders.
+  cellToday: {
+    borderWidth: 1.5,
+    borderColor: "#42a6ce",
   },
   modalBox: {
     width: "80%",

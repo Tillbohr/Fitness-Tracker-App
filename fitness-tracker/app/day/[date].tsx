@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { PolarChart, Pie } from "victory-native";
-import { styles } from "../../styles/defaultStyle";
+import { styles, activityColors } from "../../styles/defaultStyle";
 import { useDatabase } from "../../database";
 import { formatDateLong } from "../../utils/dates";
 
@@ -162,16 +162,20 @@ export default function DaySummary() {
         </TouchableOpacity>
       </View>
 
+      {/* Active fill colours match the calendar's count badges - amber for
+          nutrition, accent blue for fitness - so the two screens agree on which
+          side of the app a colour stands for. Amber is too light to carry white
+          text, so the active label switches to the dark foreground. */}
       <View style={styles.toggleRow}>
         <TouchableOpacity
-          style={[styles.toggleButton, { backgroundColor: activeSummary === "nutrition" ? "#42a6ce" : "transparent" }]}
+          style={[styles.toggleButton, activeSummary === "nutrition" && { backgroundColor: activityColors.nutrition }]}
           onPress={() => setActiveSummary("nutrition")}
         >
-          <Text style={styles.text}>Nutrition</Text>
+          <Text style={[styles.text, activeSummary === "nutrition" && styles.textOnLightFill]}>Nutrition</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.toggleButton, { backgroundColor: activeSummary === "fitness" ? "#42a6ce" : "transparent" }]}
+          style={[styles.toggleButton, activeSummary === "fitness" && { backgroundColor: activityColors.fitness }]}
           onPress={() => setActiveSummary("fitness")}
         >
           <Text style={styles.text}>Fitness</Text>

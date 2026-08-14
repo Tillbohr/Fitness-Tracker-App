@@ -137,6 +137,29 @@ export function fromDateString(value: string) {
   return new Date(year, month - 1, day);
 }
 
+// How many entries each day in a range has, for the calendar's per-day badges.
+// Meals and exercises live in separate database files so this can't be one
+// query with a JOIN - the calendar runs both and keeps a Map per type, which is
+// still two queries per month rather than one per day cell. Days with nothing
+// logged are absent from the result rather than coming back as 0.
+export type DateCount = { date: string; count: number };
+
+function getMealCountsInRange(startDate: string, endDate: string) {
+  return mealsDB.getAllSync<DateCount>(
+    `SELECT date, COUNT(*) AS count FROM meals
+     WHERE date BETWEEN ? AND ? GROUP BY date`,
+    [startDate, endDate]
+  );
+}
+
+function getExerciseCountsInRange(startDate: string, endDate: string) {
+  return exercisesDB.getAllSync<DateCount>(
+    `SELECT date, COUNT(*) AS count FROM exercises
+     WHERE date BETWEEN ? AND ? GROUP BY date`,
+    [startDate, endDate]
+  );
+}
+
 function getLoggedExerciseNames() {
   return exercisesDB
     .getAllSync<{ name: string }>('SELECT DISTINCT name FROM exercises ORDER BY name')
@@ -181,5 +204,5 @@ function clearMealDatabase() {
 }
 
 export function useDatabase() {
-  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate };
+  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals, getLoggedExerciseNames, getNutritionSeries, getExerciseVolumeSeries, getExerciseEntriesForDate, getMealCountsInRange, getExerciseCountsInRange };
 }
