@@ -34,7 +34,15 @@ export default function TabLayout() {
                 tabBarIcon: ({color, focused}) => (
                     <Ionicons name = {focused ? "bar-chart" : "bar-chart-outline"} color={color} size={24} />
                 )
-                }} 
+                }}
+            />
+            <Tabs.Screen name = "saved" options={{
+                headerShown: false,
+                title: 'Saved',
+                tabBarIcon: ({color, focused}) => (
+                    <Ionicons name = {focused ? "bookmark" : "bookmark-outline"} color={color} size={24} />
+                )
+                }}
             />
         </Tabs>
     )

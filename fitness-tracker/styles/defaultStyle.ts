@@ -90,6 +90,34 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     marginHorizontal: 4,
   },
+  toggleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#3a3f45",
+  },
+  listRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#3a3f45",
+  },
+  listRowTitle: {
+    color: "#ffffff",
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  listRowDetail: {
+    color: "#8a9199",
+    fontSize: 12,
+  },
+  emptyListText: {
+    color: "#8a9199",
+    textAlign: "center",
+    marginTop: 32,
+  },
   fieldLabel: {
     color: "#ffffff",
     fontSize: 12,

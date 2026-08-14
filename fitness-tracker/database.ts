@@ -13,6 +13,10 @@ exercisesDB.execSync(`
     reps INTEGER,
     weight REAL
   );
+  CREATE TABLE IF NOT EXISTS saved_exercises (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE
+  );
 `);
 
 mealsDB.execSync(`
@@ -21,6 +25,14 @@ mealsDB.execSync(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT,
     name TEXT,
+    calories INTEGER,
+    protein REAL,
+    carbs REAL,
+    fat REAL
+  );
+  CREATE TABLE IF NOT EXISTS saved_meals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE,
     calories INTEGER,
     protein REAL,
     carbs REAL,
@@ -67,6 +79,33 @@ function getMealDateInfo(date: string) {
   }>('SELECT * FROM meals WHERE date = ?', [date]);
 }
 
+// Saved exercises/meals are reusable library entries, separate from the dated log
+// entries in the `exercises` and `meals` tables. INSERT OR IGNORE relies on the
+// UNIQUE name column so re-adding an existing entry is a no-op instead of a duplicate.
+export type SavedExercise = { id: number; name: string };
+export type SavedMeal = {
+  id: number; name: string; calories: number; protein: number; carbs: number; fat: number;
+};
+
+function insertSavedExercise(name: string) {
+  exercisesDB.runSync('INSERT OR IGNORE INTO saved_exercises (name) VALUES (?)', [name]);
+}
+
+function getSavedExercises() {
+  return exercisesDB.getAllSync<SavedExercise>('SELECT * FROM saved_exercises ORDER BY name');
+}
+
+function insertSavedMeal(name: string, calories: number, protein: number, carbs: number, fat: number) {
+  mealsDB.runSync(
+    'INSERT OR IGNORE INTO saved_meals (name, calories, protein, carbs, fat) VALUES (?, ?, ?, ?, ?)',
+    [name, calories, protein, carbs, fat]
+  );
+}
+
+function getSavedMeals() {
+  return mealsDB.getAllSync<SavedMeal>('SELECT * FROM saved_meals ORDER BY name');
+}
+
 function clearExerciseDatabase() {
   exercisesDB.execSync('DELETE FROM exercises');
   exercisesDB.execSync('VACUUM');
@@ -78,5 +117,5 @@ function clearMealDatabase() {
 }
 
 export function useDatabase() {
-  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase };
+  return { insertExercise, getExercises, clearExerciseDatabase, getExerciseDateInfo, insertMeal, getMeals, getMealDateInfo, clearMealDatabase, insertSavedExercise, getSavedExercises, insertSavedMeal, getSavedMeals };
 }
