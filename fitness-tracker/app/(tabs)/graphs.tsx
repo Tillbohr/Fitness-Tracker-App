@@ -111,6 +111,17 @@ const MAX_DOTS = 60;
 // against the plot's top edge, fading to nothing at the baseline.
 const AREA_TOP_ALPHA = 0.16;
 
+// Breathing room between the plot and the card's outline, and the offset the
+// tooltip is clamped against - it's absolutely positioned from the padding edge,
+// the same origin the chart itself starts from.
+const CARD_PADDING = 12;
+const CARD_BORDER = 1;
+
+// The gap between the card and the screen edges, as padding on the area the card
+// fills. The card stretches into whatever is left, so this is the only thing
+// keeping the outline off the edges.
+const AREA_PADDING = 12;
+
 // Dots are drawn on a ring of the surface colour, so a point reads as a point
 // instead of dissolving into the line beneath it, which is the same hue. A
 // stroke around the mark would add ink that isn't data; the gap does the work.
@@ -295,7 +306,22 @@ export default function Graphs() {
   // its text always come from the same index rather than updating on two threads.
   const { state: pressState } = useChartPressState({ x: 0, y: { value: 0 } });
   const [selection, setSelection] = useState<{ index: number; x: number; y: number } | null>(null);
-  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+
+  // The card fills the space left below the controls, so its size comes from
+  // layout rather than being computed. Measuring the card itself rather than the
+  // area around it keeps the arithmetic to one step.
+  const [cardSize, setCardSize] = useState({ width: 0, height: 0 });
+
+  // What the tooltip is clamped inside: the card's padding box, which is also
+  // the origin an absolutely positioned child measures from. onLayout reports
+  // the border box, so the border and padding come back out of it.
+  const chartSize = useMemo(
+    () => ({
+      width: Math.max(0, cardSize.width - (CARD_PADDING + CARD_BORDER) * 2),
+      height: Math.max(0, cardSize.height - (CARD_PADDING + CARD_BORDER) * 2),
+    }),
+    [cardSize]
+  );
 
   // The chart's own press handler is a Pan, which only commits a touch once the
   // finger travels past the activation slop - a still tap can end without ever
@@ -433,17 +459,19 @@ export default function Graphs() {
 
       <Text style={graphStyle.caption}>{captionFor(selectedMetric)}</Text>
 
-      {/* The plot takes the full width: the caption above already names the
-          quantity and its unit, so neither axis carries a title of its own. */}
+      {/* The card fills everything below the controls, inset from the screen
+          edges. Neither axis carries a title of its own - the caption above
+          already names the quantity and its unit. */}
+      <View style={graphStyle.chartArea}>
       <View
-        style={graphStyle.graph}
-        onLayout={(e) => setChartSize({
+        style={graphStyle.chartCard}
+        onLayout={(e) => setCardSize({
           width: e.nativeEvent.layout.width,
           height: e.nativeEvent.layout.height,
         })}
       >
         {chartData.length === 0 ? (
-          <Text style={styles.emptyListText}>
+          <Text style={[styles.emptyListText, { marginTop: 0 }]}>
             No {selectedLabel} entries in the last {selectedTimeframe.toLowerCase()}.
           </Text>
         ) : (
@@ -591,6 +619,7 @@ export default function Graphs() {
           </View>
         )}
       </View>
+      </View>
 
     </View>
   );
@@ -657,21 +686,32 @@ const graphStyle = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
   },
-  // Doubles as the y axis title, so it names the quantity and its unit.
+  // Doubles as the y axis title, so it names the quantity and its unit. Indented
+  // to AREA_PADDING so it starts level with the card's left edge below it.
   caption: {
     color: '#8a9199',
     fontSize: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: AREA_PADDING,
     paddingBottom: 8,
   },
-  // Padding keeps the leftmost y tick and the outer x ticks off the screen
-  // edges now that nothing sits beside the plot.
-  graph: {
+  // Holds the card off the screen edges. Everything else about the card's size
+  // comes from filling this.
+  chartArea: {
+    flex: 1,
+    padding: AREA_PADDING,
+  },
+  // The same hairline border and 12px radius the modals and buttons carry.
+  // justifyContent centres the empty-state message; the chart itself is flex, so
+  // it still fills the box. alignItems is deliberately left alone - centring it
+  // would stop the chart stretching across the card.
+  chartCard: {
     flex: 1,
     justifyContent: 'center',
-    paddingLeft: 12,
-    paddingRight: 16,
-    paddingBottom: 8,
+    borderWidth: CARD_BORDER,
+    borderColor: '#3a3f45',
+    borderRadius: 12,
+    padding: CARD_PADDING,
+    overflow: 'hidden',
   },
   // The edge is tinted with the metric's colour at render time; the text inside
   // stays on the plain text tokens.
