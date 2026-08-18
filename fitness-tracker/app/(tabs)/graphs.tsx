@@ -14,15 +14,10 @@ import {
 } from "../../database";
 import { formatDuration } from "../../utils/duration";
 
-// The axis tick labels are Skia text, and Skia draws no text without a font -
-// victory-native's label branch returns null rather than falling back, so
-// leaving this off costs every number on both axes, silently. matchFont resolves
-// a system face, which keeps that at zero bundled assets; only the size and the
-// colour below are ours. A step above graphStyle.axisUnit, which annotates it.
-const axisFont = matchFont({
+const axisFontStyle = {
   fontFamily: Platform.select({ ios: 'Helvetica', android: 'sans-serif', default: 'sans-serif' }),
   fontSize: 12,
-});
+};
 
 const nutritionMetrics = ['Calories', 'Protein', 'Carbs', 'Fat'] as const;
 
@@ -204,23 +199,13 @@ export function niceScale(values: number[]): { domain: [number, number]; tickCou
 
 // Nutrition rolls up as a per-day total of whatever the meal rows recorded, a
 // weighted exercise as sets x reps x weight, a timed one as minutes - so the
-// caption has to say which. It names the quantity in full; the y axis carries
-// the bare unit alone, so the two read together instead of repeating.
+// caption has to say which. It names the quantity and its unit, which is why
+// neither axis carries a title: a label on the plot would only repeat it.
 function captionFor(metric: Metric) {
   if (metric.kind === 'time') return 'Daily total time (minutes)';
   if (metric.kind === 'volume') return 'Daily total volume - sets x reps x weight (lbs)';
   if (metric.name === 'Calories') return 'Daily total calories';
   return `Daily total ${metric.name.toLowerCase()} (g)`;
-}
-
-// The y axis title, cut to the bare unit - "kcal", not "Calories" - because the
-// caption above has already named the quantity. Sat over the tick column it
-// costs a text row, where a rotated title down the left cost 54px of plot width.
-function yAxisUnitFor(metric: Metric) {
-  if (metric.kind === 'time') return 'min';
-  if (metric.kind === 'volume') return 'lbs';
-  if (metric.name === 'Calories') return 'kcal';
-  return 'g';
 }
 
 export default function Graphs() {
@@ -327,12 +312,29 @@ export default function Graphs() {
   const [selection, setSelection] = useState<{ index: number; x: number; y: number } | null>(null);
 
   // What the tooltip is clamped inside, and the origin an absolutely positioned
-  // child measures from. This is the plot wrapper rather than the card, so the
-  // unit label above the chart cannot desync the two: the label pushes the plot
-  // down, and a box measured off the card would leave every tooltip floating
-  // that far above the finger. Measuring the wrapper needs no arithmetic either
-  // - it carries no border or padding, so its layout box is the origin exactly.
+  // child measures from. It measures the plot wrapper rather than the card
+  // because the wrapper *is* that origin: it carries no border or padding, so
+  // its layout box needs no arithmetic to become the coordinate space the
+  // tooltip is placed in. Deriving it from the card means reconstructing the
+  // same rectangle by subtraction, and desyncing the two the moment anything is
+  // laid out between the card's edge and the chart.
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+
+  // The tick labels are Skia text, and Skia draws no text without a font:
+  // victory-native's label branch returns null rather than falling back, so
+  // leaving this off costs every number on both axes, silently. matchFont takes
+  // a system face, so this needs no bundled .ttf.
+  //
+  // It has to be built here rather than at module scope. matchFont reaches into
+  // Skia, which isn't initialised during expo-router's server render of the web
+  // route - at module scope that throws while the module body runs and takes the
+  // whole route down with it. Building it in render keeps it off the server
+  // pass, where `window` is undefined and the font comes back null; the client
+  // re-runs this on hydration and the labels appear then.
+  const axisFont = useMemo(
+    () => (typeof window === 'undefined' ? null : matchFont(axisFontStyle)),
+    []
+  );
 
   // The chart's own press handler is a Pan, which only commits a touch once the
   // finger travels past the activation slop - a still tap can end without ever
@@ -341,14 +343,39 @@ export default function Graphs() {
   // when the finger drags, so sliding along the line keeps working.
   const actionsRef = useSharedValue<CartesianActionsHandle<typeof pressState> | null>(null);
 
+  // matchedIndex has to be rewound alongside the React state: the reaction below
+  // only fires on a *change*, so re-tapping the point that was just dismissed
+  // would otherwise be a no-op and the window would never come back. Defined
+  // above the gesture because the gesture now calls it.
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    pressState.matchedIndex.value = -1;
+  }, [pressState]);
+
+  // The tap runs as a worklet on the UI thread and can't read `selection`, so
+  // whether anything is pinned is mirrored into a shared value it can read.
+  const hasSelection = useSharedValue(false);
+  useEffect(() => {
+    hasSelection.value = selection !== null;
+  }, [selection, hasSelection]);
+
+  // With a point pinned, a tap anywhere in the plot dismisses it rather than
+  // selecting. Every tap lands *somewhere* - handleTouch matches the nearest
+  // point and never misses - so "tap outside to close" has to mean the tap does
+  // nothing else. Only the still tap is redirected; the Pan is left alone, so
+  // dragging along the line still moves the pinned point.
   const tapGesture = useMemo(
     () => Gesture.Race(
       Gesture.Tap().onEnd((event) => {
         'worklet';
+        if (hasSelection.value) {
+          runOnJS(clearSelection)();
+          return;
+        }
         actionsRef.value?.handleTouch(pressState, event.x, event.y);
       })
     ),
-    [actionsRef, pressState]
+    [actionsRef, pressState, hasSelection, clearSelection]
   );
 
   // Deliberately not gated on `isActive`: the tap path above sets the matched
@@ -366,14 +393,6 @@ export default function Graphs() {
       runOnJS(setSelection)({ index: current.index, x: current.x, y: current.y });
     }
   );
-
-  // matchedIndex has to be rewound alongside the React state: the reaction above
-  // only fires on a *change*, so re-tapping the point that was just dismissed
-  // would otherwise be a no-op and the window would never come back.
-  const clearSelection = useCallback(() => {
-    setSelection(null);
-    pressState.matchedIndex.value = -1;
-  }, [pressState]);
 
   // A pinned index points at a different day once the query behind it changes.
   useEffect(() => {
@@ -480,164 +499,166 @@ export default function Graphs() {
             No {selectedLabel} entries in the last {selectedTimeframe.toLowerCase()}.
           </Text>
         ) : (
-          <>
-            <Text style={graphStyle.axisUnit}>{yAxisUnitFor(selectedMetric)}</Text>
-
-            {/* The chart and the tooltip share this box on purpose - the
-                tooltip is absolutely positioned, so its origin is whatever
-                it sits inside. */}
-            <View
-              style={graphStyle.plot}
-              onLayout={(e) => setChartSize({
-                width: e.nativeEvent.layout.width,
-                height: e.nativeEvent.layout.height,
-              })}
+          // The chart and the tooltip share this box on purpose: the tooltip
+          // is absolutely positioned, so its origin is whatever it sits
+          // inside, and it is the box a tap dismisses inside.
+          <View
+            style={graphStyle.plot}
+            onLayout={(e) => setChartSize({
+              width: e.nativeEvent.layout.width,
+              height: e.nativeEvent.layout.height,
+            })}
+          >
+            <CartesianChart
+              data={chartData}
+              xKey="day"
+              yKeys={["value"]}
+              domain={{ x: [0, days - 1], y: yScale.domain }}
+              chartPressState={pressState}
+              actionsRef={actionsRef}
+              customGestures={tapGesture}
+              axisOptions={{
+                font: axisFont,
+                lineColor: "#3a3f45",
+                // The muted text token, not white: tick labels annotate the data,
+                // so they must not carry the same weight as the line they label.
+                labelColor: "#8a9199",
+                // A hairline, so the grid stays recessive against the 2px data line.
+                lineWidth: 1,
+                // Both counts are chosen to match their range: x so ticks land on
+                // whole days, y so they land on the domain's step.
+                tickCount: { x: xTickCount(days), y: yScale.tickCount },
+                formatXLabel: formatDayLabel,
+                formatYLabel: formatNumber,
+              }}
             >
-              <CartesianChart
-                data={chartData}
-                xKey="day"
-                yKeys={["value"]}
-                domain={{ x: [0, days - 1], y: yScale.domain }}
-                chartPressState={pressState}
-                actionsRef={actionsRef}
-                customGestures={tapGesture}
-                axisOptions={{
-                  font: axisFont,
-                  lineColor: "#3a3f45",
-                  // The muted text token, not white: tick labels annotate the data,
-                  // so they must not carry the same weight as the line they label.
-                  labelColor: "#8a9199",
-                  // A hairline, so the grid stays recessive against the 2px data line.
-                  lineWidth: 1,
-                  // Both counts are chosen to match their range: x so ticks land on
-                  // whole days, y so they land on the domain's step.
-                  tickCount: { x: xTickCount(days), y: yScale.tickCount },
-                  formatXLabel: formatDayLabel,
-                  formatYLabel: formatNumber,
-                }}
-              >
-                {({ points, chartBounds }) => (
-                  <>
-                    {/* A wash under the line rather than a filled block: the hue at
-                        16% against the top of the plot, gone by the baseline. */}
-                    <Area points={points.value} y0={chartBounds.bottom}>
-                      <LinearGradient
-                        start={vec(0, chartBounds.top)}
-                        end={vec(0, chartBounds.bottom)}
-                        colors={[withAlpha(seriesColor, AREA_TOP_ALPHA), withAlpha(seriesColor, 0)]}
-                      />
-                    </Area>
-
-                    <Line
-                      points={points.value}
-                      color={seriesColor}
-                      strokeWidth={2}
-                      strokeCap="round"
-                      strokeJoin="round"
+              {({ points, chartBounds }) => (
+                <>
+                  {/* A wash under the line rather than a filled block: the hue at
+                      16% against the top of the plot, gone by the baseline. */}
+                  <Area points={points.value} y0={chartBounds.bottom}>
+                    <LinearGradient
+                      start={vec(0, chartBounds.top)}
+                      end={vec(0, chartBounds.bottom)}
+                      colors={[withAlpha(seriesColor, AREA_TOP_ALPHA), withAlpha(seriesColor, 0)]}
                     />
+                  </Area>
 
-                    {/* Dropped on long timeframes, where a dot per day merges into a
-                        band; the selected point still gets its marker below. Each dot
-                        is drawn over a surface-coloured disc, so it separates from
-                        the same-coloured line without a stroke around the mark. The
-                        ring and fill interleave per point rather than running as two
-                        passes, so overlapping dots stack like coins. */}
-                    {points.value.length <= MAX_DOTS && points.value.flatMap((point, index) =>
-                      point.y == null ? [] : [
-                        <Circle
-                          key={`ring-${index}`}
-                          cx={point.x}
-                          cy={point.y}
-                          r={(selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS) + DOT_RING}
-                          color={SURFACE}
-                        />,
-                        <Circle
-                          key={`dot-${index}`}
-                          cx={point.x}
-                          cy={point.y}
-                          r={selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS}
-                          color={seriesColor}
-                        />,
-                      ]
-                    )}
+                  <Line
+                    points={points.value}
+                    color={seriesColor}
+                    strokeWidth={2}
+                    strokeCap="round"
+                    strokeJoin="round"
+                  />
 
-                    {/* On a dense chart the pinned point needs its own dot, since the
-                        per-point circles above aren't drawn. */}
-                    {points.value.length > MAX_DOTS && selection && points.value[selection.index]?.y != null && (
-                      <>
-                        <Circle
-                          cx={points.value[selection.index].x}
-                          cy={points.value[selection.index].y!}
-                          r={DOT_RADIUS_SELECTED + DOT_RING}
-                          color={SURFACE}
-                        />
-                        <Circle
-                          cx={points.value[selection.index].x}
-                          cy={points.value[selection.index].y!}
-                          r={DOT_RADIUS_SELECTED}
-                          color={seriesColor}
-                        />
-                      </>
-                    )}
+                  {/* Dropped on long timeframes, where a dot per day merges into a
+                      band; the selected point still gets its marker below. Each dot
+                      is drawn over a surface-coloured disc, so it separates from
+                      the same-coloured line without a stroke around the mark. The
+                      ring and fill interleave per point rather than running as two
+                      passes, so overlapping dots stack like coins. */}
+                  {points.value.length <= MAX_DOTS && points.value.flatMap((point, index) =>
+                    point.y == null ? [] : [
+                      <Circle
+                        key={`ring-${index}`}
+                        cx={point.x}
+                        cy={point.y}
+                        r={(selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS) + DOT_RING}
+                        color={SURFACE}
+                      />,
+                      <Circle
+                        key={`dot-${index}`}
+                        cx={point.x}
+                        cy={point.y}
+                        r={selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS}
+                        color={seriesColor}
+                      />,
+                    ]
+                  )}
 
-                    {/* Ring marking the pinned point. White rather than the series
-                        colour, so the selection affordance stays distinct from the
-                        surface ring every dot already carries. */}
-                    {selection && points.value[selection.index]?.y != null && (
+                  {/* On a dense chart the pinned point needs its own dot, since the
+                      per-point circles above aren't drawn. */}
+                  {points.value.length > MAX_DOTS && selection && points.value[selection.index]?.y != null && (
+                    <>
                       <Circle
                         cx={points.value[selection.index].x}
                         cy={points.value[selection.index].y!}
-                        r={11}
-                        color="#ffffff"
-                        style="stroke"
-                        strokeWidth={2}
+                        r={DOT_RADIUS_SELECTED + DOT_RING}
+                        color={SURFACE}
                       />
-                    )}
-                  </>
-                )}
-              </CartesianChart>
+                      <Circle
+                        cx={points.value[selection.index].x}
+                        cy={points.value[selection.index].y!}
+                        r={DOT_RADIUS_SELECTED}
+                        color={seriesColor}
+                      />
+                    </>
+                  )}
 
-            {/* Detail window for the pinned point */}
-            {selectedPoint && (
-              <View style={[graphStyle.tooltip, tooltipPosition, { borderColor: seriesColor }]}>
-                <View style={graphStyle.tooltipHeader}>
-                  <Text style={graphStyle.tooltipLabel}>Date</Text>
-                  <TouchableOpacity onPress={clearSelection} hitSlop={8}>
-                    <Text style={graphStyle.tooltipClose}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={graphStyle.tooltipValue}>
-                  {formatFullDate(fromDateString(selectedPoint.date))}
-                </Text>
+                  {/* Ring marking the pinned point. White rather than the series
+                      colour, so the selection affordance stays distinct from the
+                      surface ring every dot already carries. */}
+                  {selection && points.value[selection.index]?.y != null && (
+                    <Circle
+                      cx={points.value[selection.index].x}
+                      cy={points.value[selection.index].y!}
+                      r={11}
+                      color="#ffffff"
+                      style="stroke"
+                      strokeWidth={2}
+                    />
+                  )}
+                </>
+              )}
+            </CartesianChart>
 
-                <Text style={graphStyle.tooltipLabel}>
-                  {selectedMetric.kind === 'nutrition' ? selectedMetric.name
-                    : selectedMetric.kind === 'time' ? 'Total time' : 'Total volume'}
-                </Text>
-                {/* The series carries minutes so the axis reads well, but a headline
-                    duration is clearer as mm:ss than as "32.8 min" - and the value
-                    is exact, since the minutes came from whole seconds. */}
-                <Text style={graphStyle.tooltipValue}>
-                  {selectedMetric.kind === 'time'
-                    ? formatDuration(selectedPoint.value * 60)
-                    : `${formatNumber(selectedPoint.value)}${unitFor(selectedMetric)}`}
-                </Text>
-
-                {selectedEntries.length > 0 && (
-                  <View style={graphStyle.tooltipBreakdown}>
-                    {selectedEntries.map((entry, index) => (
-                      <Text key={index} style={graphStyle.tooltipEntry}>
-                        {selectedMetric.kind === 'time'
-                          ? formatDuration(entry.seconds)
-                          : `${entry.sets} × ${entry.reps} @ ${formatNumber(entry.weight)} lbs`}
-                      </Text>
-                    ))}
-                  </View>
-                )}
+          {/* Detail window for the pinned point */}
+          {selectedPoint && (
+            <View
+              style={[graphStyle.tooltip, tooltipPosition, { borderColor: seriesColor }]}
+              // Claims its own touches, so a tap on the box doesn't reach the
+              // gesture detector beneath and dismiss it. Children are offered
+              // the touch first, so the close button still works.
+              onStartShouldSetResponder={() => true}
+            >
+              <View style={graphStyle.tooltipHeader}>
+                <Text style={graphStyle.tooltipLabel}>Date</Text>
+                <TouchableOpacity onPress={clearSelection} hitSlop={8}>
+                  <Text style={graphStyle.tooltipClose}>✕</Text>
+                </TouchableOpacity>
               </View>
-            )}
+              <Text style={graphStyle.tooltipValue}>
+                {formatFullDate(fromDateString(selectedPoint.date))}
+              </Text>
+
+              <Text style={graphStyle.tooltipLabel}>
+                {selectedMetric.kind === 'nutrition' ? selectedMetric.name
+                  : selectedMetric.kind === 'time' ? 'Total time' : 'Total volume'}
+              </Text>
+              {/* The series carries minutes so the axis reads well, but a headline
+                  duration is clearer as mm:ss than as "32.8 min" - and the value
+                  is exact, since the minutes came from whole seconds. */}
+              <Text style={graphStyle.tooltipValue}>
+                {selectedMetric.kind === 'time'
+                  ? formatDuration(selectedPoint.value * 60)
+                  : `${formatNumber(selectedPoint.value)}${unitFor(selectedMetric)}`}
+              </Text>
+
+              {selectedEntries.length > 0 && (
+                <View style={graphStyle.tooltipBreakdown}>
+                  {selectedEntries.map((entry, index) => (
+                    <Text key={index} style={graphStyle.tooltipEntry}>
+                      {selectedMetric.kind === 'time'
+                        ? formatDuration(entry.seconds)
+                        : `${entry.sets} × ${entry.reps} @ ${formatNumber(entry.weight)} lbs`}
+                    </Text>
+                  ))}
+                </View>
+              )}
             </View>
-          </>
+          )}
+          </View>
         )}
       </View>
       </View>
@@ -707,24 +728,16 @@ const graphStyle = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
   },
-  // Names the quantity in full - the y axis below carries only its unit.
-  // Indented to AREA_PADDING so it starts level with the card's left edge below.
+  // Doubles as the y axis title, so it names the quantity and its unit. Indented
+  // to AREA_PADDING so it starts level with the card's left edge below it.
   caption: {
     color: '#8a9199',
     fontSize: 12,
     paddingHorizontal: AREA_PADDING,
     paddingBottom: 8,
   },
-  // The y axis title. The muted text token and a step below the tick labels in
-  // size: it annotates the annotation, so it sits at the bottom of the type
-  // hierarchy, not the top.
-  axisUnit: {
-    color: '#8a9199',
-    fontSize: 11,
-    paddingBottom: 4,
-  },
-  // Everything the card holds below the unit label. This is the box measured
-  // into chartSize and the one the tooltip positions against, so it deliberately
+  // Fills the card. This is the box measured into chartSize, the one the tooltip
+  // positions against, and the region a tap dismisses inside - so it deliberately
   // carries no padding or border of its own.
   plot: {
     flex: 1,
