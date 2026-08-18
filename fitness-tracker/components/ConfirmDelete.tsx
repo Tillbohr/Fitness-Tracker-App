@@ -2,12 +2,14 @@ import { Text, View, TouchableOpacity, Modal } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { styles } from "../styles/defaultStyle";
 
-// The delete confirmation shared by the two saved library pages. Both delete a
-// single named row, so the popup needs only the name and the two callbacks -
-// which table the row lives in stays with the calling screen. Cancel just closes
-// it; nothing has touched the database at this point.
-export default function ConfirmDelete({ name, onCancel, onConfirm }: {
+// The delete confirmation shared by the saved library pages and Profile's two
+// data wipes. `name` is what would be deleted; `message` overrides the question
+// above it, which the wipes need since "this" reads oddly for a whole table.
+// Which table the deletion lands in stays with the calling screen. Cancel just
+// closes the popup; nothing has touched the database at this point.
+export default function ConfirmDelete({ name, message, onCancel, onConfirm }: {
   name: string;
+  message?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -16,7 +18,7 @@ export default function ConfirmDelete({ name, onCancel, onConfirm }: {
       <View style={styles.modalBackdrop}>
         <View style={styles.confirmBox}>
 
-          <Text style={styles.confirmText}>Are you sure you want to delete this?</Text>
+          <Text style={styles.confirmText}>{message ?? "Are you sure you want to delete this?"}</Text>
           <Text style={styles.confirmSubject}>{name}</Text>
 
           <View style={styles.confirmButtonRow}>
