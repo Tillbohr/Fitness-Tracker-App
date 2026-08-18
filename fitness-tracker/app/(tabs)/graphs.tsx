@@ -1,4 +1,4 @@
-import { Text, View, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
+import { Text, View, StyleSheet, TouchableOpacity, ScrollView, Platform } from "react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect } from "expo-router";
 import { useAnimatedReaction, runOnJS, useSharedValue } from "react-native-reanimated";
@@ -6,13 +6,23 @@ import { Gesture } from "react-native-gesture-handler";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { styles, activityColors } from "../../styles/defaultStyle";
 import { CartesianChart, Line, Area, useChartPressState, type CartesianActionsHandle } from "victory-native";
-import { Circle, LinearGradient, vec } from "@shopify/react-native-skia";
+import { Circle, LinearGradient, vec, matchFont } from "@shopify/react-native-skia";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   useDatabase, toDateString, fromDateString,
   type NutritionMetric, type ExerciseMetricInfo,
 } from "../../database";
 import { formatDuration } from "../../utils/duration";
+
+// The axis tick labels are Skia text, and Skia draws no text without a font -
+// victory-native's label branch returns null rather than falling back, so
+// leaving this off costs every number on both axes, silently. matchFont resolves
+// a system face, which keeps that at zero bundled assets; only the size and the
+// colour below are ours. A step above graphStyle.axisUnit, which annotates it.
+const axisFont = matchFont({
+  fontFamily: Platform.select({ ios: 'Helvetica', android: 'sans-serif', default: 'sans-serif' }),
+  fontSize: 12,
+});
 
 const nutritionMetrics = ['Calories', 'Protein', 'Carbs', 'Fat'] as const;
 
@@ -492,6 +502,7 @@ export default function Graphs() {
                 actionsRef={actionsRef}
                 customGestures={tapGesture}
                 axisOptions={{
+                  font: axisFont,
                   lineColor: "#3a3f45",
                   // The muted text token, not white: tick labels annotate the data,
                   // so they must not carry the same weight as the line they label.
