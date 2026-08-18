@@ -23,13 +23,17 @@ There is no test suite configured in this project.
 
 ## Architecture
 
-**Routing**: Expo Router (file-based). `app/_layout.tsx` is the root `Stack` with three screens: `index` (landing page), `(tabs)` (the tab group), and `day/[date]` (the day summary screen). `app/(tabs)/_layout.tsx` defines the bottom tab bar with three tabs: `calendar`, `graphs`, and `saved`. `day/[date]` sits on the root stack rather than inside `(tabs)`, so it pushes over the tab bar as a full screen and draws its own header.
+**Routing**: Expo Router (file-based). `app/_layout.tsx` is the root `Stack` with `index` (landing page), `(tabs)` (the tab group), `day/[date]` (the day summary screen) and the two saved libraries, `saved/meals` and `saved/exercises`. `app/(tabs)/_layout.tsx` defines the bottom tab bar with three tabs: `calendar`, `graphs`, and `profile`. Everything outside `(tabs)` sits on the root stack on purpose, so it pushes over the tab bar as a full screen and draws its own header.
 
 **Data layer**: `database.ts` at the project root owns two separate SQLite databases opened synchronously via `expo-sqlite` (`exercisesDB` from `exercises.db`, `mealsDB` from `meals.db`), each with its own table (`exercises`, `meals`) created on load. All access goes through the `useDatabase()` hook, which exposes CRUD-style functions (`insertExercise`, `getExercises`, `getExerciseDateInfo`, `insertMeal`, `getMeals`, `getMealDateInfo`, `clearExerciseDatabase`, `clearMealDatabase`). Despite the "use" naming, these are plain synchronous functions, not stateful React hooks — there's no `useState`/`useEffect` inside `useDatabase()`.
 
 Dates are stored/queried as `YYYY-MM-DD` strings. Build them with `toDateString(date)` from `database.ts` rather than re-typing the `padStart` construction, parse them back with `fromDateString` (a bare `new Date('2026-08-12')` reads as UTC and lands on the previous day in western timezones), and format them for display with `formatDateLong` from `utils/dates.ts`.
 
-**Saved screen** (`app/(tabs)/saved.tsx`): the reusable meal/exercise libraries. Each row carries a trash button, and meal rows also a pencil, both muted Ionicons pinned right by `listRowActions`/`listRowBody`. Delete always routes through a confirmation (`pendingDelete` holds the kind, id and name together, so the popup can't be open without knowing its target) — `confirmBox` sizes to its content rather than reusing `modalBox`'s fixed 80%×80% sheet.
+**Profile screen** (`app/(tabs)/profile.tsx`): a tab root holding two rows that push the saved libraries. The fills come from `activityColors`, so Profile agrees with the calendar badges and the day summary about which colour is nutrition and which is fitness; both are light, so labels and icons take the dark foreground. It has no back or add button, so its `pageHeader` carries two empty `headerButton` slots to keep the title centred.
+
+**Saved library screens** (`app/saved/meals.tsx`, `app/saved/exercises.tsx`): the reusable meal/exercise libraries, one screen each, reached only from Profile. They live on the root stack rather than in `(tabs)` and draw the day screen's back / title / add header. Each row carries a trash button, and meal rows also a pencil, both muted Ionicons pinned right by `listRowActions`/`listRowBody`. Delete always routes through `components/ConfirmDelete.tsx` — each screen holds a `pendingDelete` of `{ id, name }`, so the popup can't be open without knowing its target, and the kind is implied by which screen you're on. `confirmBox` sizes to its content rather than reusing `modalBox`'s fixed 80%×80% sheet.
+
+Shared components live in `components/` at the project root next to `styles/` and `utils/`, **not** under `app/` — everything under `app/` is a route to Expo Router.
 
 Editing covers the macros only: `name` is the `UNIQUE` column in both `saved_meals` and `saved_exercises`, and an `UPDATE` onto an existing name throws (inserts get away with it via `INSERT OR IGNORE`). So `updateSavedMeal` takes no name, the edit modal shows the name read-only, and renaming means delete and re-add. That's also why exercise rows have no pencil — an exercise is only a name.
 
@@ -66,7 +70,7 @@ The tooltip is a plain RN `View` overlay, not Skia text: Skia's `Text` needs `us
 
 **Styling**: no per-component stylesheets beyond one-offs. `styles/defaultStyle.ts` exports a shared `StyleSheet` (dark theme, `#25292e` background, `#42a6ce` accent) used across screens.
 
-It also exports `activityColors` — `nutrition: "#d9a441"` (amber), `fitness: "#42a6ce"` (the accent) — the app's one definition of which colour stands for which side. It drives the day summary's nutrition/fitness toggles, the Saved tab's meals/exercises toggles, and the calendar's count badges, so those three agree. Both fills are light, so text on them uses `styles.textOnLightFill` (`#25292e`) rather than white; white on amber is only ~1.9:1. Use `activityColors` for any new nutrition-vs-fitness distinction instead of a fresh hex.
+It also exports `activityColors` — `nutrition: "#d9a441"` (amber), `fitness: "#42a6ce"` (the accent) — the app's one definition of which colour stands for which side. It drives the day summary's nutrition/fitness toggles, the Profile tab's two library buttons, and the calendar's count badges, so those three agree. Both fills are light, so text on them uses `styles.textOnLightFill` (`#25292e`) rather than white; white on amber is only ~1.9:1. Use `activityColors` for any new nutrition-vs-fitness distinction instead of a fresh hex.
 
 `graphs.tsx` additionally defines a local `graphStyle` for its dropdown UI. When adding UI, prefer extending `defaultStyle.ts` over inlining styles, to stay consistent with the rest of the app.
 
