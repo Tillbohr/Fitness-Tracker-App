@@ -345,13 +345,25 @@ export const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
-  toggleHeader: {
+  // A row on the Profile tab that opens one of the saved libraries. Filled with
+  // the activityColor of the side it leads to, so it reads as the same category
+  // the calendar badges and day summary toggles use.
+  profileButton: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#3a3f45",
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    borderRadius: 10,
+  },
+  // Takes the space between the leading icon and the chevron, so both stay
+  // pinned to their own edge however long the label is.
+  profileButtonLabel: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "600",
   },
   listRow: {
     paddingHorizontal: 16,
