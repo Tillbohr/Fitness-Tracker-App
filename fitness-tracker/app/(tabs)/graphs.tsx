@@ -194,14 +194,23 @@ export function niceScale(values: number[]): { domain: [number, number]; tickCou
 
 // Nutrition rolls up as a per-day total of whatever the meal rows recorded, a
 // weighted exercise as sets x reps x weight, a timed one as minutes - so the
-// caption has to say which. This doubles as the y axis title: it already names
-// the quantity and its unit, so a separate label down the left of the plot
-// would only repeat it for 54px of width.
+// caption has to say which. It names the quantity in full; the y axis carries
+// the bare unit alone, so the two read together instead of repeating.
 function captionFor(metric: Metric) {
   if (metric.kind === 'time') return 'Daily total time (minutes)';
   if (metric.kind === 'volume') return 'Daily total volume - sets x reps x weight (lbs)';
   if (metric.name === 'Calories') return 'Daily total calories';
   return `Daily total ${metric.name.toLowerCase()} (g)`;
+}
+
+// The y axis title, cut to the bare unit - "kcal", not "Calories" - because the
+// caption above has already named the quantity. Sat over the tick column it
+// costs a text row, where a rotated title down the left cost 54px of plot width.
+function yAxisUnitFor(metric: Metric) {
+  if (metric.kind === 'time') return 'min';
+  if (metric.kind === 'volume') return 'lbs';
+  if (metric.name === 'Calories') return 'kcal';
+  return 'g';
 }
 
 export default function Graphs() {
@@ -307,21 +316,13 @@ export default function Graphs() {
   const { state: pressState } = useChartPressState({ x: 0, y: { value: 0 } });
   const [selection, setSelection] = useState<{ index: number; x: number; y: number } | null>(null);
 
-  // The card fills the space left below the controls, so its size comes from
-  // layout rather than being computed. Measuring the card itself rather than the
-  // area around it keeps the arithmetic to one step.
-  const [cardSize, setCardSize] = useState({ width: 0, height: 0 });
-
-  // What the tooltip is clamped inside: the card's padding box, which is also
-  // the origin an absolutely positioned child measures from. onLayout reports
-  // the border box, so the border and padding come back out of it.
-  const chartSize = useMemo(
-    () => ({
-      width: Math.max(0, cardSize.width - (CARD_PADDING + CARD_BORDER) * 2),
-      height: Math.max(0, cardSize.height - (CARD_PADDING + CARD_BORDER) * 2),
-    }),
-    [cardSize]
-  );
+  // What the tooltip is clamped inside, and the origin an absolutely positioned
+  // child measures from. This is the plot wrapper rather than the card, so the
+  // unit label above the chart cannot desync the two: the label pushes the plot
+  // down, and a box measured off the card would leave every tooltip floating
+  // that far above the finger. Measuring the wrapper needs no arithmetic either
+  // - it carries no border or padding, so its layout box is the origin exactly.
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
 
   // The chart's own press handler is a Pan, which only commits a touch once the
   // finger travels past the activation slop - a still tap can end without ever
@@ -460,163 +461,172 @@ export default function Graphs() {
       <Text style={graphStyle.caption}>{captionFor(selectedMetric)}</Text>
 
       {/* The card fills everything below the controls, inset from the screen
-          edges. Neither axis carries a title of its own - the caption above
-          already names the quantity and its unit. */}
+          edges. The x axis carries no title - its ticks already read as dates -
+          and the y axis carries the bare unit above its tick column. */}
       <View style={graphStyle.chartArea}>
-      <View
-        style={graphStyle.chartCard}
-        onLayout={(e) => setCardSize({
-          width: e.nativeEvent.layout.width,
-          height: e.nativeEvent.layout.height,
-        })}
-      >
+      <View style={graphStyle.chartCard}>
         {chartData.length === 0 ? (
           <Text style={[styles.emptyListText, { marginTop: 0 }]}>
             No {selectedLabel} entries in the last {selectedTimeframe.toLowerCase()}.
           </Text>
         ) : (
-          <CartesianChart
-            data={chartData}
-            xKey="day"
-            yKeys={["value"]}
-            domain={{ x: [0, days - 1], y: yScale.domain }}
-            chartPressState={pressState}
-            actionsRef={actionsRef}
-            customGestures={tapGesture}
-            axisOptions={{
-              lineColor: "#3a3f45",
-              // The muted text token, not white: tick labels annotate the data,
-              // so they must not carry the same weight as the line they label.
-              labelColor: "#8a9199",
-              // A hairline, so the grid stays recessive against the 2px data line.
-              lineWidth: 1,
-              // Both counts are chosen to match their range: x so ticks land on
-              // whole days, y so they land on the domain's step.
-              tickCount: { x: xTickCount(days), y: yScale.tickCount },
-              formatXLabel: formatDayLabel,
-              formatYLabel: formatNumber,
-            }}
-          >
-            {({ points, chartBounds }) => (
-              <>
-                {/* A wash under the line rather than a filled block: the hue at
-                    16% against the top of the plot, gone by the baseline. */}
-                <Area points={points.value} y0={chartBounds.bottom}>
-                  <LinearGradient
-                    start={vec(0, chartBounds.top)}
-                    end={vec(0, chartBounds.bottom)}
-                    colors={[withAlpha(seriesColor, AREA_TOP_ALPHA), withAlpha(seriesColor, 0)]}
-                  />
-                </Area>
+          <>
+            <Text style={graphStyle.axisUnit}>{yAxisUnitFor(selectedMetric)}</Text>
 
-                <Line
-                  points={points.value}
-                  color={seriesColor}
-                  strokeWidth={2}
-                  strokeCap="round"
-                  strokeJoin="round"
-                />
-
-                {/* Dropped on long timeframes, where a dot per day merges into a
-                    band; the selected point still gets its marker below. Each dot
-                    is drawn over a surface-coloured disc, so it separates from
-                    the same-coloured line without a stroke around the mark. The
-                    ring and fill interleave per point rather than running as two
-                    passes, so overlapping dots stack like coins. */}
-                {points.value.length <= MAX_DOTS && points.value.flatMap((point, index) =>
-                  point.y == null ? [] : [
-                    <Circle
-                      key={`ring-${index}`}
-                      cx={point.x}
-                      cy={point.y}
-                      r={(selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS) + DOT_RING}
-                      color={SURFACE}
-                    />,
-                    <Circle
-                      key={`dot-${index}`}
-                      cx={point.x}
-                      cy={point.y}
-                      r={selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS}
-                      color={seriesColor}
-                    />,
-                  ]
-                )}
-
-                {/* On a dense chart the pinned point needs its own dot, since the
-                    per-point circles above aren't drawn. */}
-                {points.value.length > MAX_DOTS && selection && points.value[selection.index]?.y != null && (
+            {/* The chart and the tooltip share this box on purpose - the
+                tooltip is absolutely positioned, so its origin is whatever
+                it sits inside. */}
+            <View
+              style={graphStyle.plot}
+              onLayout={(e) => setChartSize({
+                width: e.nativeEvent.layout.width,
+                height: e.nativeEvent.layout.height,
+              })}
+            >
+              <CartesianChart
+                data={chartData}
+                xKey="day"
+                yKeys={["value"]}
+                domain={{ x: [0, days - 1], y: yScale.domain }}
+                chartPressState={pressState}
+                actionsRef={actionsRef}
+                customGestures={tapGesture}
+                axisOptions={{
+                  lineColor: "#3a3f45",
+                  // The muted text token, not white: tick labels annotate the data,
+                  // so they must not carry the same weight as the line they label.
+                  labelColor: "#8a9199",
+                  // A hairline, so the grid stays recessive against the 2px data line.
+                  lineWidth: 1,
+                  // Both counts are chosen to match their range: x so ticks land on
+                  // whole days, y so they land on the domain's step.
+                  tickCount: { x: xTickCount(days), y: yScale.tickCount },
+                  formatXLabel: formatDayLabel,
+                  formatYLabel: formatNumber,
+                }}
+              >
+                {({ points, chartBounds }) => (
                   <>
-                    <Circle
-                      cx={points.value[selection.index].x}
-                      cy={points.value[selection.index].y!}
-                      r={DOT_RADIUS_SELECTED + DOT_RING}
-                      color={SURFACE}
-                    />
-                    <Circle
-                      cx={points.value[selection.index].x}
-                      cy={points.value[selection.index].y!}
-                      r={DOT_RADIUS_SELECTED}
+                    {/* A wash under the line rather than a filled block: the hue at
+                        16% against the top of the plot, gone by the baseline. */}
+                    <Area points={points.value} y0={chartBounds.bottom}>
+                      <LinearGradient
+                        start={vec(0, chartBounds.top)}
+                        end={vec(0, chartBounds.bottom)}
+                        colors={[withAlpha(seriesColor, AREA_TOP_ALPHA), withAlpha(seriesColor, 0)]}
+                      />
+                    </Area>
+
+                    <Line
+                      points={points.value}
                       color={seriesColor}
+                      strokeWidth={2}
+                      strokeCap="round"
+                      strokeJoin="round"
                     />
+
+                    {/* Dropped on long timeframes, where a dot per day merges into a
+                        band; the selected point still gets its marker below. Each dot
+                        is drawn over a surface-coloured disc, so it separates from
+                        the same-coloured line without a stroke around the mark. The
+                        ring and fill interleave per point rather than running as two
+                        passes, so overlapping dots stack like coins. */}
+                    {points.value.length <= MAX_DOTS && points.value.flatMap((point, index) =>
+                      point.y == null ? [] : [
+                        <Circle
+                          key={`ring-${index}`}
+                          cx={point.x}
+                          cy={point.y}
+                          r={(selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS) + DOT_RING}
+                          color={SURFACE}
+                        />,
+                        <Circle
+                          key={`dot-${index}`}
+                          cx={point.x}
+                          cy={point.y}
+                          r={selection?.index === index ? DOT_RADIUS_SELECTED : DOT_RADIUS}
+                          color={seriesColor}
+                        />,
+                      ]
+                    )}
+
+                    {/* On a dense chart the pinned point needs its own dot, since the
+                        per-point circles above aren't drawn. */}
+                    {points.value.length > MAX_DOTS && selection && points.value[selection.index]?.y != null && (
+                      <>
+                        <Circle
+                          cx={points.value[selection.index].x}
+                          cy={points.value[selection.index].y!}
+                          r={DOT_RADIUS_SELECTED + DOT_RING}
+                          color={SURFACE}
+                        />
+                        <Circle
+                          cx={points.value[selection.index].x}
+                          cy={points.value[selection.index].y!}
+                          r={DOT_RADIUS_SELECTED}
+                          color={seriesColor}
+                        />
+                      </>
+                    )}
+
+                    {/* Ring marking the pinned point. White rather than the series
+                        colour, so the selection affordance stays distinct from the
+                        surface ring every dot already carries. */}
+                    {selection && points.value[selection.index]?.y != null && (
+                      <Circle
+                        cx={points.value[selection.index].x}
+                        cy={points.value[selection.index].y!}
+                        r={11}
+                        color="#ffffff"
+                        style="stroke"
+                        strokeWidth={2}
+                      />
+                    )}
                   </>
                 )}
+              </CartesianChart>
 
-                {/* Ring marking the pinned point. White rather than the series
-                    colour, so the selection affordance stays distinct from the
-                    surface ring every dot already carries. */}
-                {selection && points.value[selection.index]?.y != null && (
-                  <Circle
-                    cx={points.value[selection.index].x}
-                    cy={points.value[selection.index].y!}
-                    r={11}
-                    color="#ffffff"
-                    style="stroke"
-                    strokeWidth={2}
-                  />
+            {/* Detail window for the pinned point */}
+            {selectedPoint && (
+              <View style={[graphStyle.tooltip, tooltipPosition, { borderColor: seriesColor }]}>
+                <View style={graphStyle.tooltipHeader}>
+                  <Text style={graphStyle.tooltipLabel}>Date</Text>
+                  <TouchableOpacity onPress={clearSelection} hitSlop={8}>
+                    <Text style={graphStyle.tooltipClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={graphStyle.tooltipValue}>
+                  {formatFullDate(fromDateString(selectedPoint.date))}
+                </Text>
+
+                <Text style={graphStyle.tooltipLabel}>
+                  {selectedMetric.kind === 'nutrition' ? selectedMetric.name
+                    : selectedMetric.kind === 'time' ? 'Total time' : 'Total volume'}
+                </Text>
+                {/* The series carries minutes so the axis reads well, but a headline
+                    duration is clearer as mm:ss than as "32.8 min" - and the value
+                    is exact, since the minutes came from whole seconds. */}
+                <Text style={graphStyle.tooltipValue}>
+                  {selectedMetric.kind === 'time'
+                    ? formatDuration(selectedPoint.value * 60)
+                    : `${formatNumber(selectedPoint.value)}${unitFor(selectedMetric)}`}
+                </Text>
+
+                {selectedEntries.length > 0 && (
+                  <View style={graphStyle.tooltipBreakdown}>
+                    {selectedEntries.map((entry, index) => (
+                      <Text key={index} style={graphStyle.tooltipEntry}>
+                        {selectedMetric.kind === 'time'
+                          ? formatDuration(entry.seconds)
+                          : `${entry.sets} × ${entry.reps} @ ${formatNumber(entry.weight)} lbs`}
+                      </Text>
+                    ))}
+                  </View>
                 )}
-              </>
-            )}
-          </CartesianChart>
-        )}
-
-        {/* Detail window for the pinned point */}
-        {selectedPoint && (
-          <View style={[graphStyle.tooltip, tooltipPosition, { borderColor: seriesColor }]}>
-            <View style={graphStyle.tooltipHeader}>
-              <Text style={graphStyle.tooltipLabel}>Date</Text>
-              <TouchableOpacity onPress={clearSelection} hitSlop={8}>
-                <Text style={graphStyle.tooltipClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={graphStyle.tooltipValue}>
-              {formatFullDate(fromDateString(selectedPoint.date))}
-            </Text>
-
-            <Text style={graphStyle.tooltipLabel}>
-              {selectedMetric.kind === 'nutrition' ? selectedMetric.name
-                : selectedMetric.kind === 'time' ? 'Total time' : 'Total volume'}
-            </Text>
-            {/* The series carries minutes so the axis reads well, but a headline
-                duration is clearer as mm:ss than as "32.8 min" - and the value
-                is exact, since the minutes came from whole seconds. */}
-            <Text style={graphStyle.tooltipValue}>
-              {selectedMetric.kind === 'time'
-                ? formatDuration(selectedPoint.value * 60)
-                : `${formatNumber(selectedPoint.value)}${unitFor(selectedMetric)}`}
-            </Text>
-
-            {selectedEntries.length > 0 && (
-              <View style={graphStyle.tooltipBreakdown}>
-                {selectedEntries.map((entry, index) => (
-                  <Text key={index} style={graphStyle.tooltipEntry}>
-                    {selectedMetric.kind === 'time'
-                      ? formatDuration(entry.seconds)
-                      : `${entry.sets} × ${entry.reps} @ ${formatNumber(entry.weight)} lbs`}
-                  </Text>
-                ))}
               </View>
             )}
-          </View>
+            </View>
+          </>
         )}
       </View>
       </View>
@@ -686,13 +696,27 @@ const graphStyle = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
   },
-  // Doubles as the y axis title, so it names the quantity and its unit. Indented
-  // to AREA_PADDING so it starts level with the card's left edge below it.
+  // Names the quantity in full - the y axis below carries only its unit.
+  // Indented to AREA_PADDING so it starts level with the card's left edge below.
   caption: {
     color: '#8a9199',
     fontSize: 12,
     paddingHorizontal: AREA_PADDING,
     paddingBottom: 8,
+  },
+  // The y axis title. The muted text token and a step below the tick labels in
+  // size: it annotates the annotation, so it sits at the bottom of the type
+  // hierarchy, not the top.
+  axisUnit: {
+    color: '#8a9199',
+    fontSize: 11,
+    paddingBottom: 4,
+  },
+  // Everything the card holds below the unit label. This is the box measured
+  // into chartSize and the one the tooltip positions against, so it deliberately
+  // carries no padding or border of its own.
+  plot: {
+    flex: 1,
   },
   // Holds the card off the screen edges. Everything else about the card's size
   // comes from filling this.
