@@ -365,6 +365,18 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  // Profile's destructive pair, composed over profileButton. Outlined rather
+  // than filled: solid #d1453b stays reserved for confirmButtonDanger, the
+  // button that actually commits inside the confirmation, so asking and
+  // committing don't wear the same treatment.
+  profileButtonDanger: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#d1453b",
+  },
+  profileButtonDangerLabel: {
+    color: "#d1453b",
+  },
   listRow: {
     paddingHorizontal: 16,
     paddingVertical: 12,
